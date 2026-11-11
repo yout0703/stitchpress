@@ -48,9 +48,24 @@ def context_fingerprint(window, operation, include_image=True):
             "metadata",
             "text_layers",
         }
+    if operation in {"post-plan", "post-preview", "reference-export", "symbol-folder"}:
+        keys |= {
+            "library",
+            "mapping",
+            "fabric",
+            "reference",
+            "metadata",
+            "source",
+            "input_profile",
+            "output_font",
+            "text_layers",
+            "commerce",
+            "post",
+            "pattern_input",
+        }
     if operation == "showcase-preview":
         keys.add("showcase")
-    if operation == "commerce-preview":
+    if operation in {"commerce-preview", "commerce-gallery"}:
         keys |= {
             "commerce",
             "fabric",

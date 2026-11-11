@@ -18,7 +18,7 @@ from .text import draw_layer, parse_layers, values_for
 WHITE = (0, 0, 0, 0)
 BLACK = (255, 255, 255, 255)
 RED = (0, 255, 255, 0)
-MAX_RENDER_PIXELS = 60_000_000  # Measured alpha guard, streaming not yet implemented.
+MAX_RENDER_PIXELS = 60_000_000  # Single-image guard; production export uses a separate band writer.
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class CellRaster:
     ys: tuple[int, ...]
     inset: int
     style: str = "symbols"
+    dpi: int | None = None
 
 
 class Renderer:
@@ -41,6 +42,7 @@ class Renderer:
         font_data: bytes | None = None,
         title: str = "",
         text_layers: dict | None = None,
+        font_assets: dict | None = None,
     ):
         self.design, self.library, self.mapping, self.fabric = design, library, mapping, fabric
         self.code = code
@@ -48,6 +50,11 @@ class Renderer:
         self.fonts = {}
         self.title = title
         self.text_layers = parse_layers(text_layers or {})
+        self.font_assets = font_assets or {}
+        self.reading = None
+        for layer in self.text_layers.values():
+            if layer.font_asset and layer.font_asset not in self.font_assets:
+                raise ResourceError("文字区域缺少绑定字体，请重新导入")
         used = {c.key for c, n in zip(design.palette, design.counts, strict=True) if n}
         if set(mapping) != used or len(set(mapping.values())) != len(mapping):
             raise StitchPressError("映射必须覆盖且仅覆盖每种有效线色，符号不能复用")
@@ -68,7 +75,7 @@ class Renderer:
 
     def canvas(self, size):
         if size[0] * size[1] > MAX_RENDER_PIXELS:
-            raise ResourceError("输出超过6000万像素本地试验限制；尚未实现流式，不能静默缩小")
+            raise ResourceError("输出超过6000万像素单页限制；生产大图请使用分条导出，不能静默缩小")
         return Image.new("CMYK", size, WHITE)
 
     def text(self, image, xy, text: str, size: int, anchor="lt"):
@@ -149,6 +156,8 @@ class Renderer:
         return max(345, ceil(max(font.getlength(c.code) for _, c in self.entries)) + 185)
 
     def reference(self, page: Page, plan: PagePlan, *, style="symbols", minor_grid=True):
+        if self.reading is not None:
+            return self.reading.reference(page, plan, style=style, minor_grid=minor_grid)
         if style not in {"symbols", "pale", "color"}:
             raise StitchPressError("未知查图样式")
         image = self.canvas(plan.paper_px)
@@ -159,7 +168,9 @@ class Renderer:
             return ceil(n * factor)
 
         xs, ys = page_coordinates(self.layout, page, plan)
-        raster = CellRaster(page.visible, xs, ys, sc(2), style)
+        raster = CellRaster(
+            page.visible, xs, ys, max(sc(2), sc(3) // 2 + 1), style, self.fabric.dpi
+        )
         self.cells(image, raster)
         x0, y0, x1, y1 = page.visible
         if xs[-1] >= image.width - sc(50) or ys[-1] >= plan.legend_top - sc(50):
@@ -186,19 +197,24 @@ class Renderer:
             width=sc(2),
         )
         self.text(
-            image, (sc(150), sc(60)), f"StitchPress | Page {page.number}/{len(plan.pages)}", 34
+            image,
+            (plan.origin[0], sc(60)),
+            f"StitchPress | Page {page.number}/{len(plan.pages)}",
+            34,
         )
         self.text(
             image,
-            (sc(150), sc(130)),
+            (plan.origin[0], sc(130)),
             f"Columns {x0 + 1}-{x1} | Rows {y0 + 1}-{y1} | Scale {plan.scale}:1",
             32,
         )
-        self.text(image, (sc(150), plan.legend_top - sc(50)), "KEY: No. / Symbol / DMC", 32)
-        cell_w = (image.width - 2 * sc(150)) // plan.legend_columns
+        self.text(image, (plan.origin[0], plan.legend_top - sc(50)), "KEY: No. / Symbol / DMC", 32)
+        cell_w = (
+            (plan.content_right or image.width - plan.origin[0]) - plan.origin[0]
+        ) // plan.legend_columns
         for k, (index, color) in enumerate(self.entries):
             col, row = divmod(k, plan.legend_rows)
-            x, y = sc(150) + col * cell_w, plan.legend_top + row * plan.row_height
+            x, y = plan.origin[0] + col * cell_w, plan.legend_top + row * plan.row_height
             self.text(image, (x + sc(8), y + sc(12)), str(k + 1), 36)
             side = sc(42)
             image.paste(self.tile(index, side, side), (x + sc(75), y + sc(8)))
@@ -206,17 +222,19 @@ class Renderer:
         ruler_cells = min(100, plan.capacity[0])
         ruler_y = image.height - sc(155)
         length = px(Decimal(self.fabric.sx) * ruler_cells * Decimal(plan.scale), self.fabric.dpi)
-        draw.line((sc(150), ruler_y, sc(150) + length, ruler_y), fill=BLACK, width=sc(3))
+        draw.line(
+            (plan.origin[0], ruler_y, plan.origin[0] + length, ruler_y), fill=BLACK, width=sc(3)
+        )
         self.text(
             image,
-            (sc(150), ruler_y + sc(22)),
+            (plan.origin[0], ruler_y + sc(22)),
             f"{ruler_cells} cells = {Decimal(self.fabric.sx) * ruler_cells} cm "
             f"| Print {plan.scale}:1",
             32,
         )
         self.text(
             image,
-            (sc(150), image.height - sc(65)),
+            (plan.origin[0], image.height - sc(65)),
             f"Neighbors L/R/U/D: {' / '.join(str(n or '-') for n in page.neighbors)}",
             32,
         )
@@ -273,14 +291,33 @@ class Renderer:
             (xs[0], ys[-1] + sc(250), xs[-1], image.height - sc(40) - bottom_reserve),
             (xs[0], sc(310), xs[-1], ys[0] - sc(150)),
         ]
+        # The physical ruler and its label can extend beyond a tiny chart's right edge.
+        # Reserve measured space before packing the perimeter legend.
+        ruler_box = (
+            xs[0] - sc(8),
+            y - sc(10),
+            max(xs[0] + length, xs[0] + ceil(self.font(sc(32)).getlength(label))) + sc(16),
+            y + sc(85),
+        )
+
+        def intersects(a, b):
+            return a[0] < b[2] and a[2] > b[0] and a[1] < b[3] and a[3] > b[1]
+
         slots = []
         headers = {}
         for x0, y0, x1, y1 in rects:
             for col in range(max(0, (x1 - x0) // entry_w)):
                 for row in range(max(0, (y1 - y0 - sc(65)) // row_h)):
                     slot = (x0 + col * entry_w, y0 + sc(65) + row * row_h)
+                    header = (x0 + col * entry_w, y0)
+                    if intersects(
+                        (slot[0], slot[1], slot[0] + entry_w, slot[1] + row_h), ruler_box
+                    ) or intersects(
+                        (header[0], header[1], header[0] + entry_w, header[1] + sc(50)), ruler_box
+                    ):
+                        continue
                     slots.append(slot)
-                    headers[slot] = (x0 + col * entry_w, y0)
+                    headers[slot] = header
         if len(slots) < len(self.entries):
             raise ResourceError("生产余量无法放下完整图例，须调整独立SKU/版式，不能缩字或漏色")
         for header in sorted({headers[slot] for slot in slots[: len(self.entries)]}):
@@ -293,7 +330,7 @@ class Renderer:
         return image, raster
 
     def custom_text(self, image, kind, *, plan=None, page=None):
-        active = {k: v for k, v in self.text_layers.items() if k.startswith(kind) and v.template}
+        active = {k: v for k, v in self.text_layers.items() if k.startswith(kind)}
         if not active:
             return
         factor = self.fabric.dpi / 300
@@ -324,7 +361,19 @@ class Renderer:
                 image.width - sc(30),
                 image.height - sc(20),
             ),
-            "reference_top": (sc(150), sc(25), image.width - sc(150), sc(220)),
+            "symbols_top": (sc(150), sc(25), image.width - sc(150), sc(220)),
+            "symbols_bottom": (
+                sc(150),
+                image.height - sc(100),
+                image.width - sc(150),
+                image.height - sc(5),
+            ),
+            "reference_top": (
+                plan.origin[0] if plan else sc(150),
+                sc(25),
+                (plan.content_right or image.width - sc(150)) if plan else image.width - sc(150),
+                min(sc(220), plan.origin[1] - sc(50)) if plan else sc(220),
+            ),
             "reference_bottom": (
                 sc(150),
                 image.height - sc(100),
@@ -333,7 +382,7 @@ class Renderer:
             ),
         }
         for key, layer in active.items():
-            if key.startswith(kind) and layer.template:
+            if key.startswith(kind):
                 box = regions[key]
                 if (
                     kind == "production"
@@ -347,7 +396,9 @@ class Renderer:
                     box,
                     layer,
                     values,
-                    font_data=self.font_data,
+                    font_data=self.font_assets[layer.font_asset]
+                    if layer.font_asset
+                    else self.font_data,
                     dpi=self.fabric.dpi,
                     name=key,
                 )
@@ -383,11 +434,12 @@ class Renderer:
         }
 
     def save_tiff(self, image: Image.Image, path: Path, raster: CellRaster) -> dict:
+        dpi = raster.dpi or self.fabric.dpi
         image.save(
             path,
             "TIFF",
             compression="tiff_lzw",
-            dpi=(self.fabric.dpi, self.fabric.dpi),
+            dpi=(dpi, dpi),
             icc_profile=self.library.icc,
         )
         with Image.open(path) as actual:
@@ -398,7 +450,7 @@ class Renderer:
                 or actual.n_frames != 1
                 or actual.tag_v2[259] != 5
                 or actual.tag_v2[296] != 2
-                or tuple(float(n) for n in actual.info["dpi"]) != (self.fabric.dpi,) * 2
+                or tuple(float(n) for n in actual.info["dpi"]) != (dpi,) * 2
                 or actual.info.get("icc_profile") != self.library.icc
                 or actual.tobytes() != image.tobytes()
             ):

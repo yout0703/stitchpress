@@ -60,6 +60,7 @@ from .grid_item import StitchGridItem
 from .help_feedback import HelpFeedbackFeatures
 from .local_features import LocalFeatures, PagePreview
 from .materials_ui import MaterialFeatures
+from .reference_ui import ReferenceFeatures
 from .store import Coordinator, Project
 from .symbols import SymbolFeatures
 from .task_history import AIPolicy, TaskHistory, context_fingerprint
@@ -356,6 +357,7 @@ class AISettings(QDialog):
 
 
 class Workbench(
+    ReferenceFeatures,
     LocalFeatures,
     SymbolFeatures,
     BriefFeatures,
@@ -397,6 +399,7 @@ class Workbench(
 
     def build_ui(self):
         build_workspace(self, Canvas)
+        self.build_reference_pages()
 
     def set_theme(self, name, *, persist=True):
         if name not in THEMES:
@@ -426,6 +429,8 @@ class Workbench(
         self.workbench_nav.setChecked(index == 0)
         self.ai_nav.setChecked(index == 1)
         self.export_nav.setChecked(index == 2)
+        for number, nav in enumerate(getattr(self, "reference_nav", ()), 3):
+            nav.setChecked(index == number)
         self.view_controls.setVisible(index == 0)
 
     def set_canvas_tool(self, pan):
@@ -623,6 +628,7 @@ class Workbench(
             self.filter_palette()
         finally:
             self._refreshing = False
+        self.refresh_reference_pages()
 
     def actual_pixels(self):
         self.canvas.actual_pixels()
@@ -658,7 +664,9 @@ class Workbench(
                 "after": mapping,
                 "manual": True,
             }
-            self.draft.entities["mapping"] = mapping
+            from .reference_actions import bind_symbol
+
+            bind_symbol(self.draft, color.key, chosen)
             self.dirty = True
             self.refresh()
             self.restore_ai_state()
@@ -836,7 +844,9 @@ class Workbench(
             self.error(exc)
 
     def confirm_discard(self):
-        return (not self.dirty and not self.has_pending_form()) or QMessageBox.question(
+        return (
+            not self.dirty and not self.has_pending_form() and not self.reference_pending()
+        ) or QMessageBox.question(
             self,
             "未保存修改",
             "放弃当前尚未保存的修改？",
@@ -860,6 +870,10 @@ class Workbench(
             self.recovery.clear()
             self._last_recovery_sha = None
         self.coordinator, self.project_path = coordinator, path
+        self.reference_project = None
+        for panel in getattr(self, "reference_panels", ()):
+            panel.project_id = None
+        self._reference_path = None
         self.draft = copy.deepcopy(project)
         self.baseline = copy.deepcopy(project)
         self.region, self.review_regions, self.history = None, [], []
@@ -911,6 +925,9 @@ class Workbench(
             self.error(exc)
 
     def save(self):
+        if self.reference_pending():
+            self.error("有尚未应用的页面参数，请先保存 / 应用对应页面，或取消恢复")
+            return False
         if not self.apply_fields():
             return False
         if self.coordinator is None:
@@ -945,6 +962,9 @@ class Workbench(
             return False
 
     def save_as(self):
+        if self.reference_pending():
+            self.error("有尚未应用的页面参数，请先保存 / 应用对应页面，或取消恢复")
+            return False
         if not self.apply_fields():
             return False
         path, _ = QFileDialog.getSaveFileName(
@@ -997,7 +1017,15 @@ class Workbench(
             self.source_canvas.hide()
             self.source_empty.show()
             self.source_label.setText("工程已导入，可另选对应原图；原输入已保留在修订记录")
-            self.draft.assets[f"sources/{sha256(data)}{Path(path).suffix.lower()}"] = data
+            asset = f"sources/{sha256(data)}{Path(path).suffix.lower()}"
+            self.draft.assets[asset] = data
+            if old := self.draft.entities.pop("pattern_input", None):
+                self.draft.entities[f"pattern_input:{uuid4().hex}"] = old
+            if suffix == ".xsd":
+                self.draft.entities["pattern_input"] = dict(
+                    asset=asset, format="xsd", sha256=sha256(data), filename=Path(path).name
+                )
+                self._reference_path = Path(path)
             self.review_regions = []
             self.dirty = True
             self.refresh(fit=True)
@@ -1020,6 +1048,12 @@ class Workbench(
                 if v in library.by_key
             }
             mapping = assign_symbols(self.design, library, existing)
+            if old := self.draft.entities.get("library"):
+                self.draft.entities[f"library:{old['revision']}"] = copy.deepcopy(old)
+            self.draft.entities[f"mapping:{uuid4().hex}"] = {
+                "before": copy.deepcopy(self.draft.entities.get("mapping")),
+                "after": mapping,
+            }
             self.draft.assets, aliases = merge_assets(self.draft.assets, resource.assets)
             for key in ("library", "catalog", "source_profile"):
                 if key in resource.entities:
@@ -1151,6 +1185,7 @@ class Workbench(
             "context_sha": context_sha,
             "folder": folder,
             "candidate_key": job.get("candidate_key"),
+            **({"destination": job["target"]} if operation == "reference-export" else {}),
             **({"cancel_file": Path(job["cancel_file"])} if job.get("cancel_file") else {}),
         }
         self.process = QProcess(self)
@@ -1235,6 +1270,22 @@ class Workbench(
         if self.process:
             content = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
             self.log.append(content.strip())
+            if self.job and self.job["operation"] == "reference-export":
+                stages = {
+                    "planning": "检查参数",
+                    "rendering-production": "绘制生产图",
+                    "rendering-whole-chart": "绘制整张查图",
+                    "saving-settings": "保存设置",
+                    "verifying": "反读核验",
+                    "publishing": "发布新目录",
+                }
+                for line in content.splitlines():
+                    try:
+                        event = json.loads(line)
+                        name = event.get("stage", "")
+                        self.statusBar().showMessage("参考出图 · " + stages.get(name, name))
+                    except ValueError:
+                        pass
 
     def read_stderr(self):
         if self.process:
@@ -1290,6 +1341,21 @@ class Workbench(
                     else "未取得完整交付核验 · 请检查任务记录，原母版保持可用"
                 )
                 return
+            if job["operation"] == "reference-export":
+                from .jobs import find_receipt
+
+                receipt = find_receipt(job["folder"], Path(job["destination"]))
+                if receipt:
+                    self._last_post_destination = receipt["destination"]
+                    if job["project_id"] == self.draft.project_id:
+                        self.draft.entities[f"export:{receipt['job_id']}"] = receipt
+                        self.dirty = True
+                        self.update_document_state()
+                    TaskHistory.finish(job["folder"], "completed")
+                    self.statusBar().showMessage(
+                        f"参考出图已反读核验 {receipt['files']} 件；可打开目录，外观仍待人工检查"
+                    )
+                    return
             if not job["output"].exists():
                 raise StitchPressError(
                     "AI进程退出，结果/费用未知，未自动重试"
@@ -1303,6 +1369,7 @@ class Workbench(
                     self.sync_task_records()
             if result["status"] != "completed":
                 raise StitchPressError(result.get("error", "任务失败"))
+            self.statusBar().showMessage("本地任务已完成")
             if job["operation"] == "zip":
                 self.statusBar().showMessage(
                     f"ZIP已完成，核对 {result['result']['files']} 个成员SHA与CRC"
@@ -1310,6 +1377,18 @@ class Workbench(
                 return
             if job["operation"] == "symbol-card":
                 self.statusBar().showMessage("符号速查卡已导出；绑定与当前任务快照一致")
+                return
+            if job["operation"] == "reference-export":
+                receipt = result["result"]
+                self._last_post_destination = receipt["destination"]
+                if job["project_id"] == self.draft.project_id:
+                    self.draft.entities[f"export:{receipt['job_id']}"] = receipt
+                    self.dirty = True
+                    self.update_document_state()
+                self.statusBar().showMessage(
+                    f"参考出图已完成并反读核验 {receipt['files']} 件；"
+                    "外观与目标软件仍待人工检查，可打开输出目录"
+                )
                 return
             if job["operation"] == "commerce-export":
                 receipt = result["result"]
@@ -1368,6 +1447,20 @@ class Workbench(
                 return
             if job["operation"] == "compare-candidate":
                 self.show_candidate_comparison(result["result"])
+                return
+            if job["operation"] == "symbol-folder":
+                self.show_imported_symbols(result["result"])
+                return
+            if job["operation"] == "commerce-gallery":
+                from .commerce_gallery import show_gallery
+
+                show_gallery(self, result["result"])
+                return
+            if job["operation"] == "post-plan":
+                self.show_post_plan(result["result"])
+                return
+            if job["operation"] == "post-preview":
+                self.show_post_preview(result["result"])
                 return
             if job["operation"] == "plan":
                 self.statusBar().showMessage("分页计划已完成，正在查看实际布局")
@@ -1483,7 +1576,7 @@ class Workbench(
     def cancel_job(self):
         if not self.process or self.process.state() == QProcess.ProcessState.NotRunning:
             return
-        if self.job["operation"] in {"export", "batch", "commerce-export"}:
+        if self.job["operation"] in {"export", "batch", "commerce-export", "reference-export"}:
             atomic_write(self.job["cancel_file"], b"cancel")
             self.log.append("已请求安全取消，等待当前文件写入/核验结束")
         elif self.job["operation"] == "analyze":

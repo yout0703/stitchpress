@@ -12,10 +12,14 @@ MAX_STREAM_PIXELS = 250_000_000
 BAND_BYTES = 8 * 1024**2
 
 
-def save_production_stream(renderer, path, *, cancel=lambda: False, progress=lambda event: None):
+def save_production_stream(
+    renderer, path, *, cancel=lambda: False, progress=lambda event: None, bigtiff=False
+):
     width, height = renderer.layout.canvas_px
     if width * height > MAX_STREAM_PIXELS or width > 60_000:
-        raise ResourceError("流式生产TIFF暂限2.5亿像素、宽60000px；未验收BigTIFF，不自动缩图")
+        raise ResourceError(
+            "流式生产TIFF暂限2.5亿像素、宽60000px；不自动缩图；BigTIFF目标软件须另验"
+        )
     rows = max(1, min(128, BAND_BYTES // (width * 4)))
     expected = []
 
@@ -34,7 +38,7 @@ def save_production_stream(renderer, path, *, cancel=lambda: False, progress=lam
             yield imagecodecs.lzw_encode(raw.tobytes())
             surface.image.close()
 
-    with tifffile.TiffWriter(path, bigtiff=False) as writer:
+    with tifffile.TiffWriter(path, bigtiff=bigtiff) as writer:
         writer.write(
             bands(),
             shape=(height, width, 4),
@@ -55,7 +59,7 @@ def save_production_stream(renderer, path, *, cancel=lambda: False, progress=lam
     xs, ys = renderer.layout.xs, renderer.layout.ys
     checked = 0
     with tifffile.TiffFile(path) as actual:
-        if len(actual.pages) != 1 or actual.is_bigtiff:
+        if len(actual.pages) != 1 or actual.is_bigtiff != bigtiff:
             raise StitchPressError("流式TIFF页数或格式不符")
         page = actual.pages[0]
         icc = page.tags.get(34675)
@@ -115,5 +119,6 @@ def save_production_stream(renderer, path, *, cancel=lambda: False, progress=lam
         "rows_per_strip": rows,
         "maximum_band_bytes": width * rows * 4,
         "pixel_sha_verified": True,
-        "classic_tiff": True,
+        "classic_tiff": not bigtiff,
+        "bigtiff": bigtiff,
     }

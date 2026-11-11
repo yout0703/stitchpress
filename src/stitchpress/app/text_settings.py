@@ -2,17 +2,21 @@
 
 import copy
 from dataclasses import asdict
+from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -38,10 +42,24 @@ class TextSettingsDialog(QDialog):
         tabs = QTabWidget()
         layout.addWidget(tabs)
         self.controls = {}
+        self.assets = {}
+        self.extra_controls = {}
         for key, title in SLOTS.items():
             page = QWidget()
             form = QFormLayout(page)
             saved = TextLayer(**owner.draft.entities.get("text_layers", {}).get(key, {}))
+            enabled = QCheckBox("显示此栏（关闭会清除该栏基础文字）")
+            enabled.setChecked(saved.enabled)
+            font = QLabel(saved.font_asset or "沿用作品公共字体")
+            font.setWordWrap(True)
+            choose = QPushButton("选择此栏字体…")
+            choose.clicked.connect(lambda _, slot=key: self.choose_slot_font(slot))
+            reset = QPushButton("沿用公共字体")
+            reset.clicked.connect(lambda _, slot=key: self.reset_slot_font(slot))
+            self.extra_controls[key] = dict(enabled=enabled, asset=saved.font_asset, label=font)
+            form.addRow(enabled)
+            form.addRow(font)
+            form.addRow(choose, reset)
             fields = {
                 k: QLineEdit(getattr(saved, k)) for k in ("template", "points", "dx_mm", "dy_mm")
             }
@@ -90,15 +108,43 @@ class TextSettingsDialog(QDialog):
     def values(self):
         result = {}
         for key, (fields, align, colors, _) in self.controls.items():
-            if fields["template"].text().strip():
+            extra = self.extra_controls[key]
+            if (
+                fields["template"].text().strip()
+                or not extra["enabled"].isChecked()
+                or extra["asset"]
+            ):
                 result[key] = asdict(
                     TextLayer(
                         **{k: v.text() for k, v in fields.items()},
+                        enabled=extra["enabled"].isChecked(),
+                        font_asset=extra["asset"],
                         align=align.currentData(),
                         cmyk=tuple(w.value() for w in colors),
                     )
                 )
         return result
+
+    def choose_slot_font(self, key):
+        from stitchpress.core.identity import sha256
+        from stitchpress.core.resources import load_font
+
+        path, _ = QFileDialog.getOpenFileName(self, "选择有权使用的字体", "", "Fonts (*.ttf *.otf)")
+        if not path:
+            return
+        try:
+            raw = Path(path).read_bytes()
+            load_font(24, raw)
+            asset = f"resources/fonts/{sha256(raw)}.font"
+            self.assets[asset] = raw
+            self.extra_controls[key]["asset"] = asset
+            self.extra_controls[key]["label"].setText(Path(path).name)
+        except Exception as exc:
+            QMessageBox.warning(self, "字体未采用", str(exc))
+
+    def reset_slot_font(self, key):
+        self.extra_controls[key]["asset"] = None
+        self.extra_controls[key]["label"].setText("沿用作品公共字体")
 
     def preview_fields(self):
         metadata = self.owner.draft.entities["metadata"]
@@ -136,6 +182,7 @@ class TextFeatures:
             if value == old:
                 return
             self.draft.entities[f"text_layers:{uuid4().hex}"] = copy.deepcopy(old)
+            self.draft.assets.update(dialog.assets)
             self.draft.entities["text_layers"] = value
             self.dirty = True
             self.update_document_state()

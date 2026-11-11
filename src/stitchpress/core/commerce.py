@@ -98,9 +98,22 @@ class CommerceSettings:
     closeup_y: str = "0.5"
     closeup_zoom: str = "3"
     square_dpi: int = 150
+    detail_width: int = 1200
+    detail_height: int = 1600
+    detail_dpi: int = 150
+    art_source: str = "simulation"
     schema_version: int = 1
 
     def __post_init__(self):
+        if self.art_source not in {"simulation", "original", "dot"}:
+            raise StitchPressError("展示来源须为原图、点图或已有X模拟")
+        if any(
+            type(v) is not int or not 600 <= v <= 4800
+            for v in (self.detail_width, self.detail_height)
+        ):
+            raise StitchPressError("详情宽高须600–4800像素")
+        if type(self.detail_dpi) is not int or not 72 <= self.detail_dpi <= 600:
+            raise StitchPressError("详情DPI须72–600")
         if (
             type(self.schema_version) is not int
             or self.schema_version != 1
@@ -147,7 +160,11 @@ class CommerceRenderer:
             if 12 * k * k <= MAX_RENDER_PIXELS:
                 break
             cell -= 1
-        simulated = stitch_preview(self.design, cell=cell, style=context["showcase_options"].style)
+        simulated = stitch_preview(
+            self.design,
+            cell=cell,
+            style="dot" if settings.art_source == "dot" else context["showcase_options"].style,
+        )
         x, y = (
             (simulated.width - self.design.width * cell) // 2,
             (simulated.height - self.design.height * cell) // 2,
@@ -156,6 +173,17 @@ class CommerceRenderer:
             (x, y, x + self.design.width * cell, y + self.design.height * cell)
         )
         simulated.close()
+        if settings.art_source == "original":
+            if not context.get("source_data"):
+                raise ResourceError("原图展示缺少已绑定对应图，请选择或切换为点图")
+            source, _ = normalize_image(context["source_data"], context.get("input_icc"))
+            white = Image.new("RGBA", source.size, "white")
+            white.alpha_composite(source)
+            self.subject.close()
+            self.subject = white.convert("RGB")
+            self.subject.thumbnail((4096, 4096))
+            white.close()
+            source.close()
         self.symbol_renderer = None
 
     def text(self, image, value, box, size, *, ink=None, max_lines=6):
@@ -351,7 +379,7 @@ class CommerceRenderer:
         content = (
             self.settings.squares[int(target[-1]) - 1] if square else target.removeprefix("detail-")
         )
-        size = (800, 800) if square else (1200, 1600)
+        size = (800, 800) if square else (self.settings.detail_width, self.settings.detail_height)
         image = Image.new("RGB", size, color(self.settings.background))
         w, h = size
         f = w / 1200

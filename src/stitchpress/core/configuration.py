@@ -41,8 +41,23 @@ class ReferenceSettings:
     overlap: int = 0
     style: str = "symbols"
     minor_grid: bool = True
+    dpi: int | None = None
+    cell_mm: str | None = None
+    margins_mm: tuple[str, str, str, str] | None = None
 
     def __post_init__(self):
+        if self.dpi is not None and (type(self.dpi) is not int or not 72 <= self.dpi <= 1200):
+            raise StitchPressError("查图DPI须72–1200整数")
+        if self.cell_mm is not None and (
+            not isinstance(self.cell_mm, str) or not Decimal(".5") <= decimal(self.cell_mm) <= 10
+        ):
+            raise StitchPressError("查图每格须0.5–10mm；留空采用已有倍率")
+        if self.margins_mm is not None and (
+            not isinstance(self.margins_mm, (tuple, list))
+            or len(self.margins_mm) != 4
+            or any(not isinstance(v, str) or not 5 <= decimal(v) <= 50 for v in self.margins_mm)
+        ):
+            raise StitchPressError("查图四边页边距须5–50mm")
         if self.paper not in {*PAPERS, "custom", "whole"}:
             raise StitchPressError("纸张仅支持A4/A3/A2、自定义或整张查图")
         if any(

@@ -155,15 +155,19 @@ def build_workspace(w, canvas_type):
     file_menu.addAction("使用帮助与当前范围…", w.help_local)
     file_button.setMenu(file_menu)
     hl.addWidget(file_button)
-    w.export_nav = button(w, "交付", lambda: w.show_page(2), "mdi6.tray-arrow-up", checkable=True)
-    hl.addWidget(w.export_nav)
+    w.export_nav = button(
+        w, "专用交付", lambda: w.show_page(2), "mdi6.tray-arrow-up", checkable=True
+    )
+    file_menu.addAction("扩展 · 专用交付", lambda: w.show_page(2))
+    w.export_nav.hide()
     w.ai_nav = button(w, "AI 助手", lambda: w.show_page(1), "mdi6.creation", checkable=True)
-    hl.addWidget(w.ai_nav)
+    file_menu.addAction("扩展 · AI 助手", lambda: w.show_page(1))
+    w.ai_nav.hide()
     w.theme_button = button(w, "白天", w.toggle_theme, "mdi6.white-balance-sunny")
     w.theme_button.setToolTip("切换白天 / 夜间主题；只影响界面，记住本机选择")
     hl.addWidget(w.theme_button)
     hl.addWidget(button(w, "保存", w.save, "mdi6.content-save-outline"))
-    hl.addWidget(button(w, "审查并冻结", w.freeze, role="primary"))
+    hl.addWidget(button(w, "预览与出图", lambda: w.show_page(7), role="primary"))
     layout.addWidget(header)
 
     toolbar, tl = frame("viewToolbar", horizontal=True, margins=(20, 8, 20, 8), spacing=8)

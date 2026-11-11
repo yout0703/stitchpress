@@ -11,7 +11,34 @@ def run(job_path: Path) -> int:
     job = json.loads(job_path.read_bytes())
     output = Path(job["output"])
     try:
-        if job["operation"] in {"blueprint-import", "blueprint-composite"}:
+        if job["operation"] in {"post-plan", "post-preview", "reference-export"}:
+            from stitchpress.core.post import PostSettings
+
+            from .reference_package import export_reference, preflight
+            from .reference_preview import preview_reference
+            from .store import Project
+
+            project = Project.decode(Path(job["project"]).read_bytes())
+            if job["operation"] == "post-plan":
+                result = preflight(project, demo=True)
+            elif job["operation"] == "post-preview":
+                result = preview_reference(
+                    project,
+                    job["target"],
+                    output.parent / "post-preview.png",
+                    job.get("page_number", 1),
+                )
+            else:
+                result = export_reference(
+                    project,
+                    job["target"],
+                    output.parent,
+                    options=PostSettings(**job["options"]),
+                    demo=job.get("demo", False),
+                    cancel=lambda: Path(job["cancel_file"]).exists(),
+                    progress=lambda event: print(json.dumps(event, ensure_ascii=False), flush=True),
+                )
+        elif job["operation"] in {"blueprint-import", "blueprint-composite"}:
             from stitchpress.core.blueprints import prepare_blueprint
 
             from .store import Project
@@ -125,6 +152,37 @@ def run(job_path: Path) -> int:
                         )["subject"],
                     )
                     result = {"design": design.to_dict(), "patch": patch, "conversion": patch}
+        elif job["operation"] == "symbol-folder":
+            import copy
+
+            from .reference_actions import import_symbol_folder
+            from .store import Project
+
+            project = Project.decode(Path(job["project"]).read_bytes())
+            imported = import_symbol_folder(project, job["folder"])
+            candidate = copy.deepcopy(project)
+            candidate.entities["library"] = imported["record"]
+            candidate.entities["mapping"] = imported["mapping"]
+            candidate.entities.pop("manual_mapping", None)
+            candidate.entities.pop("freeze", None)
+            candidate.assets.update(imported["assets"])
+            path = output.parent / "symbol-candidate.stitchpress"
+            atomic_write(path, candidate.encode())
+            result = dict(project=str(path), receipts=imported["receipts"])
+        elif job["operation"] == "commerce-gallery":
+            from stitchpress.core.commerce import CommerceSettings
+
+            from .commerce import commerce_context
+            from .commerce_gallery import gallery_images
+            from .store import Project
+
+            project = Project.decode(Path(job["project"]).read_bytes())
+            result = gallery_images(
+                commerce_context(project),
+                CommerceSettings(**project.entities.get("commerce", {})),
+                project.assets,
+                output.parent / "gallery",
+            )
         elif job["operation"] in {"commerce-export", "commerce-preview"}:
             from stitchpress.core.commerce import CommerceRenderer, CommerceSettings
 
@@ -202,6 +260,7 @@ def run(job_path: Path) -> int:
                     font_data=context["font_data"],
                     title=context["title"],
                     text_layers=context["text_layers"],
+                    font_assets=context["font_assets"],
                 )
                 if job["operation"] == "preview":
                     number = job.get("page_number", 1)
@@ -264,13 +323,19 @@ def run(job_path: Path) -> int:
         print(json.dumps({"stage": "completed"}), flush=True)
         return 0
     except Exception as exc:
+        from stitchpress.core.errors import Cancelled
+
         from .ai import RemoteUnknown
 
         atomic_write(
             output,
             canonical_bytes(
                 {
-                    "status": "remote_unknown" if isinstance(exc, RemoteUnknown) else "failed",
+                    "status": "remote_unknown"
+                    if isinstance(exc, RemoteUnknown)
+                    else "cancelled"
+                    if isinstance(exc, Cancelled)
+                    else "failed",
                     "error": str(exc),
                     "base_sha": job.get("base_sha"),
                 }

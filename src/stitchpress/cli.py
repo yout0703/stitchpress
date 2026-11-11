@@ -56,6 +56,13 @@ def main(argv=None):
     export.add_argument(
         "--targets", help="补件目标：production,reference,pdf,counts,showcase,notes"
     )
+    post = sub.add_parser("reference-export", help="一期参考全套输出，独立于N+6")
+    post.add_argument("project", type=Path)
+    post.add_argument("destination", type=Path)
+    post.add_argument("--work", type=Path, required=True)
+    post.add_argument("--demo", action="store_true")
+    post.add_argument("--cancel-file", type=Path)
+    post.add_argument("--targets", help="逗号分隔参考目标；不传则采用作品设置")
     resources = sub.add_parser("import-factory")
     for arg in ("profile", "manifest", "catalog", "output"):
         resources.add_argument(arg, type=Path)
@@ -96,6 +103,25 @@ def execute(args):
             "runtime_executable": sys.executable,
             "worker_program": worker_program(),
         }
+    elif args.command == "reference-export":
+        from dataclasses import replace
+
+        from .app.reference_package import export_reference
+        from .core.post import PostSettings
+
+        project = Project.decode(args.project.read_bytes())
+        options = PostSettings(**project.entities.get("post", {}))
+        if args.targets:
+            options = replace(options, targets=tuple(args.targets.split(",")))
+        data = export_reference(
+            project,
+            args.destination,
+            args.work,
+            options=options,
+            demo=args.demo,
+            cancel=lambda: bool(args.cancel_file and args.cancel_file.exists()),
+            progress=lambda event: print(json.dumps(event, ensure_ascii=False), flush=True),
+        )
     elif args.command == "demo":
         if args.output.exists():
             raise StitchPressError("目标作品已存在，请另存路径")

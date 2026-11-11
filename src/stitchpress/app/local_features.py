@@ -118,6 +118,17 @@ class SpecificationDialog(QDialog):
             ("原色底＋符号", "color"),
         ):
             self.style.addItem(text, value)
+        self.reading_dpi = QSpinBox()
+        self.reading_dpi.setRange(0, 1200)
+        self.reading_dpi.setSpecialValueText("沿用生产DPI")
+        self.reading_cell = QLineEdit()
+        self.reading_cell.setPlaceholderText("留空沿用格距 × 阅读倍率")
+        self.reading_margins = [QLineEdit() for _ in range(4)]
+        form.addRow("查图独立DPI（72–1200）", self.reading_dpi)
+        form.addRow("查图每格毫米（0.5–10）", self.reading_cell)
+        for name, field in zip(("左", "上", "右", "下"), self.reading_margins, strict=True):
+            field.setPlaceholderText("留空沿用基础页边距")
+            form.addRow(name + "页边距 mm（5–50）", field)
         self.minor_grid = QCheckBox("显示逐格细线（十格线始终显示）")
         for text, item in (
             ("纸张", self.paper),
@@ -221,6 +232,12 @@ class SpecificationDialog(QDialog):
         self.overlap.setValue(reference.overlap)
         self.style.setCurrentIndex(self.style.findData(reference.style))
         self.minor_grid.setChecked(reference.minor_grid)
+        self.reading_dpi.setValue(reference.dpi or 0)
+        self.reading_cell.setText(reference.cell_mm or "")
+        for field, value in zip(
+            self.reading_margins, reference.margins_mm or ("",) * 4, strict=True
+        ):
+            field.setText(value)
         self.update_paper_controls()
 
     def update_paper_controls(self):
@@ -265,6 +282,11 @@ class SpecificationDialog(QDialog):
             overlap=self.overlap.value(),
             style=self.style.currentData(),
             minor_grid=self.minor_grid.isChecked(),
+            dpi=self.reading_dpi.value() or None,
+            cell_mm=self.reading_cell.text().strip() or None,
+            margins_mm=tuple(w.text().strip() for w in self.reading_margins)
+            if any(w.text().strip() for w in self.reading_margins)
+            else None,
         )
         return fabric, reference
 

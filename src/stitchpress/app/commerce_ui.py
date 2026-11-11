@@ -48,7 +48,7 @@ class CommerceDialog(QDialog):
         self.resize(760, 650)
         layout = QVBoxLayout(self)
         note = QLabel(
-            "内置场景是独立绘制的示意插画，可导入自己的背景。画作来自母版模拟，保持比例；超出场景时拒绝裁切。详情1200×1600，方图800×800，与生产参数分开。"
+            "内置场景是独立绘制的示意插画，可导入自己的背景。画作来自母版模拟，保持比例；超出场景时拒绝裁切。详情默认1200×1600，可自定义；方图800×800，与生产参数分开。"
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -109,6 +109,26 @@ class CommerceDialog(QDialog):
         }
         self.care = QTextEdit(self.saved.care)
         self.care.setMaximumHeight(100)
+        self.art_source = QComboBox()
+        for text, value in (
+            ("对应原图", "original"),
+            ("钻石点图", "dot"),
+            ("X针格模拟", "simulation"),
+        ):
+            self.art_source.addItem(text, value)
+        self.art_source.setCurrentIndex(self.art_source.findData(self.saved.art_source))
+        form.addRow("场景画作来源", self.art_source)
+        self.detail_fields = {}
+        for key, title, minimum, maximum in (
+            ("detail_width", "详情宽 px", 600, 4800),
+            ("detail_height", "详情高 px", 600, 4800),
+            ("detail_dpi", "详情 DPI", 72, 600),
+        ):
+            field = QSpinBox()
+            field.setRange(minimum, maximum)
+            field.setValue(getattr(self.saved, key))
+            self.detail_fields[key] = field
+            form.addRow(title, field)
         self.size, self.dpi = QSpinBox(), QSpinBox()
         self.size.setRange(20, 80)
         self.size.setValue(self.saved.font_pixels)
@@ -204,6 +224,8 @@ class CommerceDialog(QDialog):
             care=self.care.toPlainText(),
             font_pixels=self.size.value(),
             square_dpi=self.dpi.value(),
+            art_source=self.art_source.currentData(),
+            **{k: field.value() for k, field in self.detail_fields.items()},
             **{k: self.rgb(v) for k, v in self.colors.items()},
         )
 
@@ -309,7 +331,7 @@ class CommerceFeatures:
                 boxes[target] = box
                 layout.addWidget(box)
             note = QLabel(
-                "详情1200×1600，方图800×800；可只选单项。未审核母版仅能在交付页的演示模式导出，图片会标明DRAFT。来源对比需原图。"
+                "详情默认1200×1600，可自定义；方图800×800；可只选单项。未审核母版仅能在交付页的演示模式导出，图片会标明DRAFT。来源对比需原图。"
             )
             note.setWordWrap(True)
             layout.addWidget(note)

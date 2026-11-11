@@ -142,6 +142,7 @@ def test_palette_search_highlight_and_navigation_keep_canvas_context(qtbot):
     window.show()
     original = window.design.content_sha
     first_color = window.design.palette[0]
+    window.show_page(0)  # Canvas remains available alongside the new reference pages.
     window.palette_search.setText(first_color.code)
     visible = [r for r in range(window.table.rowCount()) if not window.table.isRowHidden(r)]
     assert visible
@@ -206,6 +207,7 @@ def test_large_canvas_uses_viewport_tiles_without_full_preview_allocation(qtbot,
     window.show()
     project = demo_project(640, 640, 3)
     window.set_project(project)
+    window.show_page(0)
     item = next(i for i in window.canvas.scene().items() if isinstance(i, StitchGridItem))
     assert item.overview.width() == 640 and item.overview.height() == 640
     window.canvas.actual_pixels()

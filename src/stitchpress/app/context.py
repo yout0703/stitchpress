@@ -49,5 +49,10 @@ def export_context(project):
         else (),
         "font_data": project.assets[font["asset"]] if font else None,
         "text_layers": project.entities.get("text_layers", {}),
+        "font_assets": {
+            record["font_asset"]: project.assets[record["font_asset"]]
+            for record in project.entities.get("text_layers", {}).values()
+            if record.get("font_asset")
+        },
         "material_rules": project.entities.get("material_rules", {}).get("rules", []),
     }

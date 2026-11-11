@@ -5,8 +5,6 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from dataclasses import asdict
-from decimal import Decimal
-from math import ceil
 from pathlib import Path
 from time import monotonic
 from uuid import uuid4
@@ -17,7 +15,7 @@ from stitchpress.core.configuration import ReferenceSettings, ShowcaseSettings
 from stitchpress.core.documents import write_counts, write_pdf
 from stitchpress.core.errors import Cancelled, StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256, sha256_file
-from stitchpress.core.layout import Fabric, PagePlan, decimal, page_plan, px
+from stitchpress.core.layout import Fabric, PagePlan, decimal, px
 from stitchpress.core.models import Design, ReviewRecord, ThreadColor, validate_catalog_membership
 from stitchpress.core.render import MAX_RENDER_PIXELS, Renderer, stitch_preview
 from stitchpress.core.resources import SymbolLibrary, bundled_font
@@ -26,7 +24,7 @@ from stitchpress.platform.files import atomic_write, exclusive_lock
 
 from .artifact_cache import ArtifactCache
 
-PIPELINE_REVISION = "local-export-v4"
+PIPELINE_REVISION = "local-export-v5"
 FULL_TARGETS = frozenset({"production", "reference", "pdf", "counts", "showcase", "notes"})
 
 
@@ -41,6 +39,7 @@ def export_plan(
     font_data=None,
     title="",
     text_layers=None,
+    font_assets=None,
     targets=FULL_TARGETS,
 ):
     reference = reference or ReferenceSettings()
@@ -53,41 +52,18 @@ def export_plan(
         font_data=font_data,
         title=title,
         text_layers=text_layers,
+        font_assets=font_assets,
     )
     paper_cm = reference.paper_cm
-    if reference.paper == "whole":
-        factor = fabric.dpi / 300
-        mag = decimal(reference.scale)
-        pw = max(
-            ceil(300 * factor)
-            + px(decimal(fabric.sx) * ceil(design.width / 10) * 10 * mag, fabric.dpi)
-            + 50,
-            ceil((300 + 6 * renderer.legend_entry_width()) * factor),
-        )
-        columns = min(6, (pw - ceil(300 * factor)) // ceil(renderer.legend_entry_width() * factor))
-        ph = (
-            ceil((285 + 80 + 330) * factor)
-            + ceil(len(mapping) / columns) * ceil(62 * factor)
-            + px(decimal(fabric.sy) * ceil(design.height / 10) * 10 * mag, fabric.dpi)
-            + 50
-        )
-        paper_cm = tuple(str(Decimal(n) * Decimal("2.54") / fabric.dpi) for n in (pw, ph))
     needs_pages = bool(set(targets) & {"reference", "pdf", "notes"})
-    plan = (
-        page_plan(
-            design.width,
-            design.height,
-            len(mapping),
-            fabric,
-            paper_cm=paper_cm,
-            overlap=reference.overlap,
-            scale=reference.scale,
-            legend_entry_width=renderer.legend_entry_width(),
-        )
-        if needs_pages
-        else PagePlan(
+    if needs_pages:
+        from stitchpress.core.reading import reading_layout
+
+        renderer.reading, plan = reading_layout(renderer, reference)
+    else:
+        plan = PagePlan(
             paper_cm,
-            tuple(px(decimal(v), fabric.dpi) for v in paper_cm),
+            tuple(px(decimal(v), reference.dpi or fabric.dpi) for v in paper_cm),
             (0, 0),
             0,
             0,
@@ -96,7 +72,6 @@ def export_plan(
             (0, 0),
             (),
         )
-    )
     if len(plan.pages) > 100:
         raise StitchPressError("试验版暂限100张查图页，请减少当前任务规模")
     # Conservative working-space estimate, including decoded rasters, PDF, staging and cache.
@@ -117,6 +92,7 @@ def export_plan(
         {
             "production_px": renderer.layout.canvas_px,
             "production_streaming": production > MAX_RENDER_PIXELS,
+            "reference_dpi": reference.dpi or fabric.dpi,
             "paper_px": plan.paper_px,
             "page_count": len(plan.pages),
             "files": len(plan.pages) + 6,
@@ -155,6 +131,7 @@ def export_snapshot(context, *, targets=FULL_TARGETS, demo=False):
         "material_rules": material_rules,
         "review_context": review_context,
         "font_sha": sha256(font_data or bundled_font().read_bytes()),
+        "font_assets": {k: sha256(v) for k, v in context.get("font_assets", {}).items()},
         "symbol_pixels": {s.key: s.pixel_sha for s in library.symbols},
         "catalog_membership": [c.key for c in catalog],
         "demo": demo,
@@ -179,6 +156,7 @@ def export_package(
     showcase_options: ShowcaseSettings | None = None,
     targets: frozenset[str] | None = None,
     font_data: bytes | None = None,
+    font_assets: dict | None = None,
     text_layers: dict | None = None,
     material_rules: tuple | list = (),
     cache_root: Path | None = None,
@@ -213,6 +191,7 @@ def export_package(
         font_data=font_data,
         title=title,
         text_layers=text_layers,
+        font_assets=font_assets,
         targets=targets,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -236,6 +215,7 @@ def export_package(
             material_rules=material_rules,
             review_context=review_context,
             font_data=font_data,
+            font_assets=font_assets or {},
             catalog=catalog,
         ),
         targets=targets,
@@ -402,11 +382,13 @@ def export_package(
                 {
                     "kind": "pdf",
                     "pages": [sha256_file(p) for p in page_paths],
-                    "dpi": fabric.dpi,
+                    "dpi": reference.dpi or fabric.dpi,
                     "paper": plan.paper_cm,
                     "icc": snapshot["icc_sha"],
                 },
-                lambda: write_pdf(page_paths, path, fabric.dpi, plan.paper_cm, library.icc),
+                lambda: write_pdf(
+                    page_paths, path, reference.dpi or fabric.dpi, plan.paper_cm, library.icc
+                ),
             )
         if "counts" in targets:
             path = staging / f"{name}-Stitch-Counts-v01.xlsx"

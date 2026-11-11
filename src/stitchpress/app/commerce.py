@@ -115,7 +115,7 @@ def export_commerce(
                 deps["scene"] = scene
                 asset = scene.get("background_asset")
                 deps["background_sha"] = sha256(project.assets[asset]) if asset else None
-            if content == "compare":
+            if content == "compare" or settings.art_source == "original":
                 deps.update(
                     source=sha256(context["source_data"]) if context["source_data"] else None,
                     input_icc=sha256(context["input_icc"]) if context["input_icc"] else None,
@@ -138,7 +138,9 @@ def export_commerce(
                 image.save(
                     path,
                     icc_profile=icc,
-                    dpi=(settings.square_dpi,) * 2 if target.startswith("square") else (150, 150),
+                    dpi=(settings.square_dpi,) * 2
+                    if target.startswith("square")
+                    else (settings.detail_dpi,) * 2,
                 )
                 with Image.open(path) as actual:
                     actual.load()

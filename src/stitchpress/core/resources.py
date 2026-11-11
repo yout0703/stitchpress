@@ -209,7 +209,11 @@ def load_catalog(data: bytes, brand: str = "DMC") -> tuple[ThreadColor, ...]:
 
 
 def assign_symbols(
-    design: Design, library: SymbolLibrary, existing: dict[str, str] | None = None
+    design: Design,
+    library: SymbolLibrary,
+    existing: dict[str, str] | None = None,
+    *,
+    strategy="order",
 ) -> dict[str, str]:
     colors = [c for c, n in zip(design.palette, design.counts, strict=True) if n]
     if len(colors) > len(library.symbols):
@@ -221,10 +225,55 @@ def assign_symbols(
     ):
         raise StitchPressError("既有/手动绑定引用未知或重复符号")
     available = [s.key for s in library.symbols if s.key not in result.values()]
-    # Source palette order is stable. Assignment is persisted, not rerun at export.
-    for color in sorted(colors, key=natural_color_key):
+    if strategy not in {"order", "color-nearest-v1"}:
+        raise StitchPressError("未知符号分配策略")
+    averages = {}
+    if strategy == "color-nearest-v1":
+        import numpy as np
+
+        for symbol in library.symbols:
+            image = symbol.image()
+            ink = np.any(np.asarray(image) > 0, axis=2)
+            rgb = (
+                ImageCms.profileToProfile(
+                    image,
+                    ImageCms.ImageCmsProfile(io.BytesIO(library.icc)),
+                    ImageCms.createProfile("sRGB"),
+                    outputMode="RGB",
+                    renderingIntent=1,
+                )
+                if library.icc
+                else image.convert("RGB")
+            )
+            pixels = np.asarray(rgb)[ink]
+            if not len(pixels):
+                raise ResourceError("符号没有有效着墨像素")
+            averages[symbol.key] = tuple(float(v) for v in pixels.mean(axis=0))
+            rgb.close()
+            image.close()
+    counts = {c.key: n for c, n in zip(design.palette, design.counts, strict=True)}
+    ordered = sorted(
+        colors,
+        key=(lambda c: (-counts[c.key], natural_color_key(c)))
+        if strategy == "color-nearest-v1"
+        else natural_color_key,
+    )
+    rank = {symbol.key: i for i, symbol in enumerate(library.symbols)}
+    for color in ordered:
         if color.key not in result:
-            result[color.key] = available.pop(0)
+            key = (
+                min(
+                    available,
+                    key=lambda key: (
+                        sum((a - b) ** 2 for a, b in zip(averages[key], color.rgb, strict=True)),
+                        rank[key],
+                    ),
+                )
+                if averages
+                else available[0]
+            )
+            result[color.key] = key
+            available.remove(key)
     return result
 
 

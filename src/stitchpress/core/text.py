@@ -13,6 +13,8 @@ SLOTS = {
     "production_bottom": "生产底栏",
     "reference_top": "查图顶栏",
     "reference_bottom": "查图底栏",
+    "symbols_top": "符号表/卡顶栏",
+    "symbols_bottom": "符号表/卡底栏",
 }
 FIELDS = {
     "title",
@@ -38,8 +40,14 @@ class TextLayer:
     dx_mm: str = "0"
     dy_mm: str = "0"
     cmyk: tuple[int, int, int, int] = (255, 255, 255, 255)
+    enabled: bool = True
+    font_asset: str | None = None
 
     def __post_init__(self):
+        if type(self.enabled) is not bool or (
+            self.font_asset is not None and not isinstance(self.font_asset, str)
+        ):
+            raise StitchPressError("文字显示开关/字体引用无效")
         if (
             not isinstance(self.template, str)
             or len(self.template) > 2000
@@ -109,6 +117,8 @@ def checked_font(size, data, text):
 
 
 def draw_layer(image, region, layer, values, *, font_data, dpi, name):
+    if not layer.enabled:
+        return
     text = expand(layer.template, values)
     if not text:
         return

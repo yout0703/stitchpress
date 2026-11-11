@@ -64,6 +64,10 @@ def validate_entities(entities: dict, assets: dict[str, bytes]):
         ReferenceSettings(**entities["reference"])
     if entities.get("showcase"):
         ShowcaseSettings(**entities["showcase"])
+    if entities.get("post"):
+        from stitchpress.core.post import PostSettings
+
+        PostSettings(**entities["post"])
     if entities.get("commerce"):
         from stitchpress.core.commerce import CommerceSettings, SceneSettings
 
@@ -87,7 +91,9 @@ def validate_entities(entities: dict, assets: dict[str, bytes]):
     if entities.get("text_layers"):
         from stitchpress.core.text import parse_layers
 
-        parse_layers(entities["text_layers"])
+        for layer in parse_layers(entities["text_layers"]).values():
+            if layer.font_asset and layer.font_asset not in assets:
+                raise StitchPressError("文字区域缺少内嵌字体")
     if entities.get("ai_policy"):
         from .task_history import AIPolicy
 

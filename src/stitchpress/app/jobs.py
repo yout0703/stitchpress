@@ -35,7 +35,11 @@ def verify_delivery(directory: Path, receipt: dict):
 
 
 def find_receipt(work: Path, destination: Path, request_id=None):
-    for path in sorted(work.glob("job-*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for path in sorted(
+        (p for pattern in ("job-*.json", "post-*.json") for p in work.glob(pattern)),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ):
         try:
             record = json.loads(path.read_bytes())
             if Path(record.get("destination", "")) == destination and (

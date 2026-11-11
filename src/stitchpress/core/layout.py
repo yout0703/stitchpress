@@ -97,6 +97,7 @@ class PagePlan:
     capacity: tuple[int, int]
     pages: tuple[Page, ...]
     scale: str = "1"
+    content_right: int | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -112,6 +113,7 @@ def page_plan(
     scale: str = "1",
     legend_columns: int = 6,
     legend_entry_width: int = 345,
+    margins_mm=None,
 ) -> PagePlan:
     if colors < 1 or colors > 512 or overlap < 0:
         raise StitchPressError("图例色数或重叠格数无效")
@@ -121,14 +123,19 @@ def page_plan(
     pw, ph = (px(decimal(s), fabric.dpi) for s in paper_cm)
     factor = fabric.dpi / 300
     ox, oy = ceil(150 * factor), ceil(285 * factor)
+    right, bottom = ceil(150 * factor), ceil(330 * factor)
+    if margins_mm is not None:
+        left, top, right_mm, bottom_mm = (decimal(v) / 10 for v in margins_mm)
+        ox, oy = px(left, fabric.dpi), px(top, fabric.dpi) + ceil(135 * factor)
+        right, bottom = px(right_mm, fabric.dpi), px(bottom_mm, fabric.dpi) + ceil(180 * factor)
     row_height = ceil(62 * factor)
     # Font-measured entry width supplied by renderer; never shrink font to gain capacity.
-    cols = min(legend_columns, (pw - 2 * ox) // ceil(legend_entry_width * factor))
+    cols = min(legend_columns, (pw - ox - right) // ceil(legend_entry_width * factor))
     if cols < 1:
         raise StitchPressError("纸张宽度无法容纳规定字号的图例")
     rows = ceil(colors / cols)
-    legend_top = ph - ceil(330 * factor) - rows * row_height
-    avail_w = pw - 2 * ox
+    legend_top = ph - bottom - rows * row_height
+    avail_w = pw - ox - right
     avail_h = legend_top - oy - ceil(80 * factor)
     pitch_x = decimal(fabric.sx) * fabric.dpi / Decimal("2.54") * mag
     pitch_y = decimal(fabric.sy) * fabric.dpi / Decimal("2.54") * mag
@@ -172,6 +179,7 @@ def page_plan(
         (cap_x, cap_y),
         tuple(pages),
         scale,
+        pw - right,
     )
 
 
