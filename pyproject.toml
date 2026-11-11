@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stitchpress"
+version = "0.1.0.dev1"
+description = "Cross-stitch authoring and deterministic printed delivery workbench"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "pyside6>=6.9,<7",
+  "pillow>=12,<13",
+  "numpy>=2.2,<3",
+  "pypdf>=6,<7",
+  "openpyxl>=3.1,<4",
+  "defusedxml>=0.7,<1",
+  "keyring>=25,<26",
+]
+
+[project.scripts]
+stitchpress = "stitchpress.cli:main"
+stitchpress-desktop = "stitchpress.app.desktop:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.12",
+    "pytest-qt>=4.4,<5",
+    "pypdfium2>=4.30,<6",
+]
+build = [
+    "nuitka==4.1.1",
+    "ordered-set>=4",
+    "zstandard>=0.23",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stitchpress"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
