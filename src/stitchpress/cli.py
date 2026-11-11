@@ -19,6 +19,9 @@ def main(argv=None):
     demo.add_argument("--colors", type=int, default=8)
     inspect = sub.add_parser("inspect")
     inspect.add_argument("project", type=Path)
+    migrate = sub.add_parser("migrate", help="旧作品升级为独立副本，保留原文件")
+    migrate.add_argument("project", type=Path)
+    migrate.add_argument("output", type=Path)
     for command in ("check", "plan"):
         local = sub.add_parser(command)
         local.add_argument("project", type=Path)
@@ -109,6 +112,7 @@ def execute(args):
             "commit_seq": project.commit_seq,
             "entities": list(project.entities),
             "assets": len(project.assets),
+            "schema_version": project.source_schema,
         }
         if "design" in project.entities:
             design = Design.from_dict(project.entities["design"])
@@ -119,6 +123,10 @@ def execute(args):
                 stitches=sum(design.counts),
                 master_sha=design.content_sha,
             )
+    elif args.command == "migrate":
+        from .app.store import migrate_project
+
+        data = migrate_project(args.project, args.output)
     elif args.command == "check":
         from .core.quality import inspect_design
 

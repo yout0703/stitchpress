@@ -16,6 +16,7 @@ from stitchpress.platform.files import atomic_write, exclusive_lock
 
 MAX_PROJECT_BYTES = 256 * 1024 * 1024
 MAX_PROJECT_FILES = 2048
+PROJECT_SCHEMA = 2
 
 
 def _safe_member(name: str) -> None:
@@ -51,6 +52,9 @@ class Project:
     entities: dict[str, dict]
     assets: dict[str, bytes]
     events: list[str]
+    source_schema: int = PROJECT_SCHEMA
+    source_container_sha: str | None = None
+    source_project_id: str | None = None
 
     @classmethod
     def create(cls, title: str = "未命名作品") -> "Project":
@@ -59,7 +63,24 @@ class Project:
     def revision(self, key: str) -> str:
         return digest(self.entities.get(key))
 
+    def upgraded_copy(self):
+        updated = copy.deepcopy(self)
+        if self.source_schema < PROJECT_SCHEMA:
+            report = {
+                "from_schema": self.source_schema,
+                "to_schema": PROJECT_SCHEMA,
+                "original_container_sha": self.source_container_sha,
+                "original_project_id": self.source_project_id or self.project_id,
+                "method": "copy-preserve-resources-v1",
+                "legacy_reviews": "recheck-source-context-before-production",
+            }
+            updated.entities["migration:" + digest(report)] = report
+            updated.source_schema = PROJECT_SCHEMA
+        return updated
+
     def encode(self) -> bytes:
+        if self.source_schema < PROJECT_SCHEMA:
+            return self.upgraded_copy().encode()
         from .validation import validate_entities
 
         validate_entities(self.entities, self.assets)
@@ -68,7 +89,7 @@ class Project:
             if name == "manifest.json":
                 raise StitchPressError("资源路径与作品清单冲突")
         manifest = {
-            "schema_version": 1,
+            "schema_version": PROJECT_SCHEMA,
             "project_id": self.project_id,
             "commit_seq": self.commit_seq,
             "entities": self.entities,
@@ -115,7 +136,9 @@ class Project:
                 }
                 if not isinstance(manifest, dict) or set(manifest) != required:
                     raise StitchPressError("作品清单含缺失或未知字段，不能不完整写回")
-                if manifest["schema_version"] != 1:
+                if type(manifest["schema_version"]) is not int or manifest[
+                    "schema_version"
+                ] not in {1, PROJECT_SCHEMA}:
                     raise StitchPressError("未来或不支持的作品版本；不能写回旧格式")
                 if (
                     not isinstance(manifest["project_id"], str)
@@ -149,6 +172,9 @@ class Project:
                     manifest["entities"],
                     assets,
                     manifest["events"],
+                    manifest["schema_version"],
+                    sha256(data),
+                    manifest["project_id"],
                 )
         except StitchPressError:
             raise
@@ -161,6 +187,38 @@ class Project:
             RecursionError,
         ) as exc:
             raise StitchPressError("作品容器字段损坏或不完整") from exc
+
+
+def migrate_project(source: Path, target: Path):
+    """Upgrade a legacy file through an independent writer, never overwrite either path."""
+    source, target = source.resolve(), target.resolve()
+    if source == target or target.exists():
+        raise StitchPressError("升级须使用尚不存在的新路径，不能覆盖原作品或其他文件")
+    raw = source.read_bytes()
+    project = Project.decode(raw)
+    if project.source_schema >= PROJECT_SCHEMA:
+        raise StitchPressError("作品已是当前格式，无需升级")
+    original_id = project.project_id
+    project.project_id = uuid4().hex
+    writer = Coordinator(target, project)
+    try:
+        if target.exists():
+            raise StitchPressError("升级目标已由其他进程建立，未覆盖")
+        writer.commit(expected_seq=project.commit_seq, reads={}, changes={})
+        restored = Project.decode(target.read_bytes())
+        return {
+            "saved": str(target),
+            "from_schema": project.source_schema,
+            "to_schema": restored.source_schema,
+            "original_project_id": original_id,
+            "original_sha": sha256(raw),
+            "saved_sha": sha256(target.read_bytes()),
+            "assets_preserved": restored.assets == project.assets,
+            "original_preserved": sha256(source.read_bytes()) == sha256(raw),
+            "review": "recheck-source-context-before-production",
+        }
+    finally:
+        writer.close()
 
 
 class Coordinator:
@@ -203,6 +261,8 @@ class Coordinator:
         event_id: str | None = None,
     ) -> Project:
         with self._mutex:
+            if self.project.source_schema < PROJECT_SCHEMA and self._disk_sha is not None:
+                raise ConflictError("旧格式作品只读保留；请另存新格式副本，不能原地覆盖迁移")
             if type(expected_seq) is not int or expected_seq < 0:
                 raise ConflictError("提交序列须为非负整数")
             disk_sha = sha256(self.path.read_bytes()) if self.path.exists() else None
@@ -230,6 +290,7 @@ class Coordinator:
             updated.commit_seq += 1
             if event_id:
                 updated.events.append(event_id)
+            updated = updated.upgraded_copy()
             payload = updated.encode()
             previous = self.path.read_bytes() if self.path.exists() else None
             if (sha256(previous) if previous is not None else None) != self._disk_sha:

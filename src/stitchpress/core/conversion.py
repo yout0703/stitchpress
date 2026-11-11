@@ -30,6 +30,12 @@ class ConversionOptions:
             raise StitchPressError("未知alpha或采样策略")
         if type(self.alpha_threshold) is not int or not 1 <= self.alpha_threshold <= 255:
             raise StitchPressError("alpha阈值须为1–255")
+        if (
+            not isinstance(self.background, (tuple, list))
+            or len(self.background) != 3
+            or any(type(v) is not int or not 0 <= v <= 255 for v in self.background)
+        ):
+            raise StitchPressError("合成背景须为三个0–255整数")
 
 
 def normalize_image(data: bytes, override_icc: bytes | None = None) -> tuple[Image.Image, dict]:
@@ -162,3 +168,150 @@ def convert_image(
     )
     record["result_sha"] = design.content_sha
     return design, record
+
+
+def compose_local_image(original, candidate, region, grid_size, *, original_icc=None):
+    """Normalize both inputs, then take only an explicitly aligned rectangle from candidate."""
+    base, base_record = normalize_image(original, original_icc)
+    edited, edited_record = normalize_image(candidate)
+    try:
+        if base.size != edited.size:
+            raise StitchPressError("局部图像尺寸/方向不一致，不能拉伸贴回；请作为整体蓝图候选")
+        width, height = grid_size
+        x0, y0, x1, y1 = region
+        if any(type(v) is not int for v in (*grid_size, *region)) or not (
+            0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height
+        ):
+            raise StitchPressError("局部合成针格坐标无效")
+        from math import ceil
+
+        box = (
+            x0 * base.width // width,
+            y0 * base.height // height,
+            ceil(x1 * base.width / width),
+            ceil(y1 * base.height / height),
+        )
+        if box[0] >= box[2] or box[1] >= box[3]:
+            raise StitchPressError("局部区域不足一个源像素，不能确定对应关系")
+        composed = base.copy()
+        composed.paste(edited.crop(box), box[:2])
+        outside = (
+            (0, 0, base.width, box[1]),
+            (0, box[3], base.width, base.height),
+            (0, box[1], box[0], box[3]),
+            (box[2], box[1], base.width, box[3]),
+        )
+        for area in outside:
+            if composed.crop(area).tobytes() != base.crop(area).tobytes():
+                raise StitchPressError("局部合成外区核验失败")
+        output = io.BytesIO()
+        composed.save(output, "PNG")
+        composed.close()
+        return output.getvalue(), {
+            "original": base_record,
+            "candidate": edited_record,
+            "pixel_region": box,
+            "grid_region": region,
+            "alignment": "human-confirmed-same-canvas",
+            "outside_pixels": "exact-normalized-original",
+            "method": "local-composite-v1",
+        }
+    finally:
+        base.close()
+        edited.close()
+
+
+def convert_region(
+    data,
+    catalog,
+    options,
+    base,
+    region,
+    *,
+    protected=frozenset(),
+    override_icc=None,
+    capacity=66,
+    subject_mask=None,
+):
+    """Quantize only the selected grid samples; append colors and preserve all outer semantics."""
+    from .models import PatchCell, apply_patch
+    from .proposals import design_changes
+
+    if (options.width, options.height) != (base.width, base.height):
+        raise StitchPressError("局部转换不允许修改W/H，请创建整体转换候选")
+    x0, y0, x1, y1 = region
+    if any(type(v) is not int for v in region) or not (
+        0 <= x0 < x1 <= base.width and 0 <= y0 < y1 <= base.height
+    ):
+        raise StitchPressError("局部转换区域越界")
+    normalized, normalization = normalize_image(data, override_icc)
+    sampled = normalized.resize((base.width, base.height), Image.Resampling.BOX)
+    local = sampled.crop(region)
+    raw = io.BytesIO()
+    local.save(raw, "PNG")
+    normalized.close()
+    sampled.close()
+    local.close()
+    local_options = ConversionOptions(
+        x1 - x0,
+        y1 - y0,
+        options.max_colors,
+        alpha_mode=options.alpha_mode,
+        alpha_threshold=options.alpha_threshold,
+        background=options.background,
+        resampling=options.resampling,
+    )
+    if subject_mask is not None and (
+        subject_mask.shape != (base.height, base.width) or subject_mask.dtype != np.bool_
+    ):
+        raise StitchPressError("主体蒙版须为当前针格布尔矩阵，不能隐式缩放")
+    regional, run = convert_image(
+        raw.getvalue(),
+        catalog,
+        local_options,
+        subject_mask=subject_mask[y0:y1, x0:x1] if subject_mask is not None else None,
+    )
+    palette = list(base.palette)
+    lookup = {c.key: i for i, c in enumerate(palette)}
+    appended = []
+    for color in regional.palette:
+        if color.key in lookup:
+            if palette[lookup[color.key]].rgb != color.rgb:
+                raise StitchPressError("目录身份相同但RGB不同，不能改写区域外色板")
+        else:
+            lookup[color.key] = len(palette)
+            palette.append(color)
+            appended.append(color)
+    cells = []
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            index = regional.labels[y - y0][x - x0]
+            after = lookup[regional.palette[index].key] if index >= 0 else -1
+            if base.labels[y][x] != after:
+                cells.append(PatchCell(x, y, base.labels[y][x], after))
+    if not cells:
+        raise StitchPressError("局部转换没有针格变化，无需生成新修订")
+    allowed = frozenset((x, y) for y in range(y0, y1) for x in range(x0, x1))
+    result = apply_patch(
+        base,
+        base_sha=base.content_sha,
+        cells=tuple(cells),
+        allowed=allowed,
+        protected=protected,
+        append_colors=tuple(appended),
+        capacity=min(capacity, options.max_colors),
+    )
+    if any((change["x"], change["y"]) not in allowed for change in design_changes(base, result)):
+        raise StitchPressError("局部转换改变了区域外语义")
+    return result, {
+        "kind": "local-conversion-v1",
+        "base_sha": base.content_sha,
+        "result_sha": result.content_sha,
+        "region": region,
+        "cells": [asdict(c) for c in cells],
+        "source": normalization,
+        "regional_run": run,
+        "append_colors": [asdict(c) for c in appended],
+        "options": asdict(options),
+        "external_semantics": "unchanged",
+    }

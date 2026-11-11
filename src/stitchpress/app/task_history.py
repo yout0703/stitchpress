@@ -61,8 +61,13 @@ def context_fingerprint(window, operation, include_image=True):
             "output_font",
             "input_profile",
         }
-    if operation == "convert":
+    if operation in {"convert", "convert-region"}:
         keys |= {"catalog", "annotations", "input_profile", "conversion_options", "brief"}
+    if operation in {"compare-candidate", "migrate-candidate"}:
+        keys |= {"catalog", "library", "mapping", "annotations", "source"}
+        keys |= {k for k in entities if k.startswith(("candidate:", "revision:", "patch:"))}
+    if operation in {"blueprint-import", "blueprint-composite"}:
+        keys |= {"brief", "source", "input_profile", "annotations"}
     if operation == "analyze":
         keys |= {"brief", "creative_prompt"}
         if include_image:

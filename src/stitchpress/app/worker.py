@@ -11,7 +11,121 @@ def run(job_path: Path) -> int:
     job = json.loads(job_path.read_bytes())
     output = Path(job["output"])
     try:
-        if job["operation"] in {"commerce-export", "commerce-preview"}:
+        if job["operation"] in {"blueprint-import", "blueprint-composite"}:
+            from stitchpress.core.blueprints import prepare_blueprint
+
+            from .store import Project
+
+            path = Path(job["file"])
+            if path.stat().st_size > 64 * 1024**2:
+                raise ValueError("蓝图文件超过64MiB上限")
+            raw = path.read_bytes()
+            project = Project.decode(Path(job["project"]).read_bytes())
+            source = project.entities.get("source")
+            from stitchpress.core.identity import sha256
+
+            parent_sha = sha256(project.assets[source["asset"]]) if source else None
+            composite = None
+            if job["operation"] == "blueprint-composite":
+                from stitchpress.core.conversion import compose_local_image
+                from stitchpress.core.models import Design
+
+                from .revisions import protected_cells
+
+                base = Design.from_dict(project.entities["design"])
+                x0, y0, x1, y1 = job["region"]
+                if any(x0 <= x < x1 and y0 <= y < y1 for x, y in protected_cells(project, base)):
+                    raise ValueError("选区触及保护区/负空间，请先明确修改标注")
+                profile = project.entities.get("input_profile")
+                merged, composite = compose_local_image(
+                    project.assets[source["asset"]],
+                    raw,
+                    tuple(job["region"]),
+                    (base.width, base.height),
+                    original_icc=project.assets[profile["asset"]] if profile else None,
+                )
+                edited = output.parent / "edited-original.image"
+                atomic_write(edited, raw)
+                raw = merged
+            normalized, record = prepare_blueprint(
+                raw,
+                origin="local-composite" if composite else job["origin"],
+                note=job.get("note", ""),
+                provider=job.get("provider", ""),
+                model=job.get("model", ""),
+                parent_sha=parent_sha,
+            )
+            original = output.parent / "blueprint-original.image"
+            converted = output.parent / "blueprint-normalized.png"
+            atomic_write(original, raw)
+            atomic_write(converted, normalized)
+            result = {
+                "record": record,
+                "original_path": str(original),
+                "normalized_path": str(converted),
+                "label": path.name,
+                **({"composite": composite, "edited_path": str(edited)} if composite else {}),
+            }
+        elif job["operation"] in {"compare-candidate", "migrate-candidate", "convert-region"}:
+            from stitchpress.core.models import Design
+            from stitchpress.core.resources import library_from_assets, load_catalog
+
+            from .revisions import compare_candidate, protected_cells
+            from .store import Project
+
+            project = Project.decode(Path(job["project"]).read_bytes())
+            if job["operation"] == "compare-candidate":
+                result = compare_candidate(project, job["candidate_key"])
+            else:
+                library = library_from_assets(project.entities["library"], project.assets)
+                if job["operation"] == "migrate-candidate":
+                    from stitchpress.core.proposals import apply_migration
+
+                    parent = project.entities[job["candidate_key"]]
+                    design = Design.from_dict(parent["design"])
+                    result_design, patch = apply_migration(
+                        design,
+                        job["proposal"],
+                        [tuple(xy) for xy in job["selected"]],
+                        capacity=len(library.symbols),
+                        protected=protected_cells(project, design),
+                    )
+                    result = {
+                        "design": result_design.to_dict(),
+                        "patch": patch,
+                        "conversion": parent["conversion"],
+                        "parent_candidate": job["candidate_key"],
+                    }
+                else:
+                    from stitchpress.core.conversion import ConversionOptions, convert_region
+                    from stitchpress.core.identity import sha256
+                    from stitchpress.core.masks import annotation_masks
+
+                    catalog = project.entities.get("catalog")
+                    if not catalog:
+                        raise ValueError("局部转换需要已导入目录")
+                    options = ConversionOptions(**job["options"])
+                    base = Design.from_dict(project.entities["design"])
+                    source = project.entities["source"]
+                    profile = project.entities.get("input_profile")
+                    design, patch = convert_region(
+                        project.assets[source["asset"]],
+                        load_catalog(project.assets[catalog["asset"]], catalog.get("brand", "DMC")),
+                        options,
+                        base,
+                        tuple(job["region"]),
+                        capacity=len(library.symbols),
+                        override_icc=project.assets[profile["asset"]] if profile else None,
+                        protected=protected_cells(project, base),
+                        subject_mask=annotation_masks(
+                            project.entities.get("annotations"),
+                            base.width,
+                            base.height,
+                            sha256(project.assets[source["asset"]]),
+                        )["subject"],
+                    )
+                    result = {"design": design.to_dict(), "patch": patch, "conversion": patch}
+        elif job["operation"] in {"commerce-export", "commerce-preview"}:
             from stitchpress.core.commerce import CommerceRenderer, CommerceSettings
 
             from .commerce import commerce_context, export_commerce

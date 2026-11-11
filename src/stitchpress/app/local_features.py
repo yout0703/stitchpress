@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from PIL import Image
 from PySide6.QtCore import QRectF, QTimer
+from PySide6.QtGui import QPainterPath
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -40,6 +41,7 @@ from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256
 from stitchpress.core.importers import export_oxs, import_oxs
 from stitchpress.core.layout import Fabric
+from stitchpress.core.masks import annotation_masks
 from stitchpress.core.resources import load_font
 from stitchpress.platform.files import atomic_write
 from stitchpress.platform.settings import settings_dir
@@ -967,6 +969,7 @@ class LocalFeatures:
                 sha256(self.source_image) if self.source_image else None,
             )
             self.draft.entities["annotations"] = record
+            self.invalidate_review("主体/负空间/保护区改变")
             self.dirty = True
             self.refresh_annotations()
             self.update_document_state()
@@ -978,7 +981,115 @@ class LocalFeatures:
 
     def clear_annotations(self):
         if record := self.draft.entities.pop("annotations", None):
+            self.invalidate_review("蒙版标注清除")
             self.draft.entities[f"annotations:{uuid4().hex}"] = record
+            self.dirty = True
+            self.refresh_annotations()
+            self.update_document_state()
+
+    def start_polygon_mask(self, kind):
+        self.show_page(0)
+        self.canvas.begin_polygon(kind)
+        self.statusBar().showMessage(
+            "左键逐点标注；双击或右键完成；Esc取消。按针格中心规则填充，不自动平滑。"
+        )
+
+    def annotate_polygon(self, payload):
+        try:
+            design = self.design
+            dx = (self.canvas.sceneRect().width() - design.width * 18) // 2
+            dy = (self.canvas.sceneRect().height() - design.height * 18) // 2
+            points = []
+            for x, y in payload["points"]:
+                point = [
+                    min(design.width, max(0, round((x - dx) / 18))),
+                    min(design.height, max(0, round((y - dy) / 18))),
+                ]
+                if not points or point != points[-1]:
+                    points.append(point)
+            record = copy.deepcopy(
+                self.draft.entities.get("annotations")
+                or {
+                    "schema_version": 1,
+                    "grid": [design.width, design.height],
+                    "source_sha": sha256(self.source_image) if self.source_image else None,
+                    "regions": [],
+                }
+            )
+            record["regions"].append(
+                {
+                    "id": uuid4().hex,
+                    "kind": payload["kind"],
+                    "shape": "polygon",
+                    "points": points,
+                    "fill_rule": "cell-center-even-odd-rational-v1",
+                }
+            )
+            annotation_masks(
+                record,
+                design.width,
+                design.height,
+                sha256(self.source_image) if self.source_image else None,
+            )
+            self.draft.entities["annotations"] = record
+            self.invalidate_review("多边形标注改变")
+            self.dirty = True
+            self.refresh_annotations()
+            self.update_document_state()
+            self.statusBar().showMessage("多边形已加入草稿，源图与针格坐标已绑定")
+        except Exception as exc:
+            self.error(exc)
+
+    def manage_annotations(self):
+        record = self.draft.entities.get("annotations")
+        if not record:
+            return self.statusBar().showMessage("当前没有蒙版标注")
+        dialog = QDialog(self)
+        dialog.setWindowTitle("蒙版标注管理 · 保存后生效")
+        dialog.resize(720, 550)
+        layout = QVBoxLayout(dialog)
+        table = QTableWidget(0, 3)
+        table.setHorizontalHeaderLabels(["类型", "形状", "范围/顶点数"])
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        entries = copy.deepcopy(record["regions"])
+
+        def refresh():
+            table.setRowCount(len(entries))
+            for i, entry in enumerate(entries):
+                for j, value in enumerate(
+                    (
+                        entry["kind"],
+                        entry.get("shape", "rectangle"),
+                        str(entry.get("region", str(len(entry.get("points", []))) + "个顶点")),
+                    )
+                ):
+                    table.setItem(i, j, QTableWidgetItem(value))
+
+        def remove():
+            if table.currentRow() >= 0:
+                entries.pop(table.currentRow())
+                refresh()
+
+        button = QPushButton("移除所选标注")
+        button.clicked.connect(remove)
+        layout.addWidget(button)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        refresh()
+        if dialog.exec() == QDialog.DialogCode.Accepted and entries != record["regions"]:
+            self.draft.entities[f"annotations:{uuid4().hex}"] = copy.deepcopy(record)
+            if entries:
+                self.draft.entities["annotations"] = {**record, "regions": entries}
+            else:
+                self.draft.entities.pop("annotations", None)
+            self.invalidate_review("蒙版标注移除")
             self.dirty = True
             self.refresh_annotations()
             self.update_document_state()
@@ -986,11 +1097,24 @@ class LocalFeatures:
     def refresh_annotations(self):
         record = self.draft.entities.get("annotations")
         regions = []
-        if record and record.get("grid") == [self.design.width, self.design.height]:
+        if (
+            record
+            and record.get("grid") == [self.design.width, self.design.height]
+            and record.get("source_sha")
+            == (sha256(self.source_image) if self.source_image else None)
+        ):
             dx = (self.canvas.sceneRect().width() - self.design.width * 18) // 2
             dy = (self.canvas.sceneRect().height() - self.design.height * 18) // 2
             colors = {"subject": "#5cbea8", "blank": "#a58ae6", "protected": "#d99c54"}
             for item in record["regions"]:
+                if item.get("shape") == "polygon":
+                    path = QPainterPath()
+                    path.moveTo(dx + item["points"][0][0] * 18, dy + item["points"][0][1] * 18)
+                    for x, y in item["points"][1:]:
+                        path.lineTo(dx + x * 18, dy + y * 18)
+                    path.closeSubpath()
+                    regions.append((path, colors[item["kind"]]))
+                    continue
                 x0, y0, x1, y1 = item["region"]
                 regions.append(
                     (
@@ -1028,6 +1152,7 @@ class LocalFeatures:
                 "sha256": sha256(data),
                 "name": Path(path).name,
             }
+            self.invalidate_review("源图输入ICC改变")
             self.dirty = True
             if self.source_image:
                 self.display_source(self.source_image)
@@ -1037,6 +1162,7 @@ class LocalFeatures:
 
     def clear_input_icc(self):
         if self.draft.entities.pop("input_profile", None):
+            self.invalidate_review("源图输入ICC覆盖清除")
             self.dirty = True
             if self.source_image:
                 try:

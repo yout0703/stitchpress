@@ -22,6 +22,11 @@ def main():
     }
 
     def run(arguments):
+        report_path = output / "cli-response.json"
+        cli = arguments[0] == "--internal-cli"
+        if cli:
+            report_path.unlink(missing_ok=True)
+            arguments = ["--internal-cli-report", str(report_path), *arguments[1:]]
         result = subprocess.run(
             [str(binary), *arguments],
             cwd=output,
@@ -32,6 +37,11 @@ def main():
         )
         if result.returncode or result.stderr.strip():
             raise RuntimeError(f"Native executable failed: {result.returncode}\n{result.stderr}")
+        if cli:
+            report = json.loads(report_path.read_bytes())
+            if report["exit_code"] or report["stderr"].strip():
+                raise RuntimeError(f"Native CLI report failed: {report}")
+            return report["stdout"]
         return result.stdout
 
     doctor = json.loads(run(["--internal-cli", "doctor"]))

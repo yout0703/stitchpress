@@ -17,6 +17,28 @@ def main():
         from stitchpress.cli import main as cli
 
         return cli(sys.argv[2:])
+    if len(sys.argv) > 2 and sys.argv[1] == "--internal-cli-report":
+        # Windows GUI bootloaders have no standard handles. Return via an explicit file.
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from stitchpress.cli import main as cli
+        from stitchpress.core.identity import canonical_bytes
+        from stitchpress.platform.files import atomic_write
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                code = cli(sys.argv[3:])
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 2
+        atomic_write(
+            Path(sys.argv[2]),
+            canonical_bytes(
+                {"exit_code": code, "stdout": out.getvalue(), "stderr": err.getvalue()}
+            ),
+        )
+        return code
     from stitchpress.app.desktop import main as desktop
 
     return desktop()

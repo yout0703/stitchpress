@@ -145,8 +145,21 @@ class ReviewRecord:
     negative_space: bool
     source_match: bool
     notes: str
+    source_sha: str | None = None
+    brief_sha: str | None = None
+    annotations_sha: str | None = None
+    input_icc_sha: str | None = None
+    reviewed_at: str | None = None
 
     def validate(self, design: Design) -> None:
+        import re
+
+        for key in ("source_sha", "brief_sha", "annotations_sha", "input_icc_sha"):
+            value = getattr(self, key)
+            if value is not None and (
+                not isinstance(value, str) or not re.fullmatch("[a-f0-9]{64}", value)
+            ):
+                raise StitchPressError("审核来源指纹格式无效")
         if not isinstance(self.reviewer, str) or not isinstance(self.notes, str):
             raise StitchPressError("审核人和说明须为文本")
         if any(type(v) is not bool for v in (self.overall, self.negative_space, self.source_match)):
@@ -162,6 +175,13 @@ class ReviewRecord:
                 raise StitchPressError("局部审核坐标须为整数")
             if not 0 <= x0 < x1 <= design.width or not 0 <= y0 < y1 <= design.height:
                 raise StitchPressError("局部审核坐标越界")
+
+    def validate_context(self, context=None):
+        for key in ("source_sha", "brief_sha", "annotations_sha", "input_icc_sha"):
+            if getattr(self, key) != (context or {}).get(key):
+                raise StitchPressError(
+                    "审核对应的源图/设计要求/蒙版/输入ICC已改变或旧审核未绑定来源，请重新核对冻结"
+                )
 
 
 @dataclass(frozen=True)

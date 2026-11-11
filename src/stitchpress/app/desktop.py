@@ -3,12 +3,13 @@ import json
 import math
 import sys
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QProcess, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -49,8 +50,11 @@ from stitchpress.platform.settings import load_settings, save_secret, save_setti
 from .ai import ImageServiceProfile, ServiceProfile
 from .appearance import THEMES, apply_appearance
 from .assets import merge_assets, remap_assets
+from .blueprints import BlueprintFeatures
 from .brief import BriefFeatures
+from .candidates import CandidateFeatures
 from .commerce_ui import CommerceFeatures
+from .context import review_context
 from .fixtures import demo_project
 from .grid_item import StitchGridItem
 from .help_feedback import HelpFeedbackFeatures
@@ -61,11 +65,13 @@ from .symbols import SymbolFeatures
 from .task_history import AIPolicy, TaskHistory, context_fingerprint
 from .task_ui import TaskFeatures, instance_id
 from .text_settings import TextFeatures
+from .workflow_ui import WorkflowFeatures
 from .workspace import build_workspace
 
 
 class Canvas(QGraphicsView):
     region_selected = Signal(QRectF)
+    polygon_selected = Signal(dict)
     zoom_changed = Signal(float)
 
     def __init__(self):
@@ -80,11 +86,15 @@ class Canvas(QGraphicsView):
         self._regions = []
         self._region_items = []
         self._auto_fit = True
+        self._polygon_kind = None
+        self._polygon_points = []
+        self._polygon_item = None
         self.selection_color = "#86deca"
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def set_image(self, image, fit=False):
+        self.cancel_polygon()
         old_rect = self.sceneRect()
         self.scene().clear()
         self.selection_item = None
@@ -99,6 +109,7 @@ class Canvas(QGraphicsView):
             self.fit()
 
     def set_design(self, design, highlight=None, fit=False):
+        self.cancel_polygon()
         old_rect = self.sceneRect()
         self.scene().clear()
         self.selection_item = None
@@ -159,9 +170,66 @@ class Canvas(QGraphicsView):
         for rect, color in regions:
             pen = QPen(QColor(color), 2, Qt.PenStyle.DashLine)
             pen.setCosmetic(True)
-            self._region_items.append(self.scene().addRect(rect, pen))
+            self._region_items.append(
+                self.scene().addPath(rect, pen)
+                if isinstance(rect, QPainterPath)
+                else self.scene().addRect(rect, pen)
+            )
+
+    def begin_polygon(self, kind):
+        self.cancel_polygon()
+        self._polygon_kind = kind
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def cancel_polygon(self):
+        if self._polygon_item is not None:
+            self.scene().removeItem(self._polygon_item)
+        self._polygon_item = None
+        self._polygon_points = []
+        if self._polygon_kind is not None:
+            self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        self._polygon_kind = None
+
+    def finish_polygon(self):
+        if len(self._polygon_points) >= 3:
+            payload = {"kind": self._polygon_kind, "points": list(self._polygon_points)}
+            self.cancel_polygon()
+            self.polygon_selected.emit(payload)
+
+    def mouseDoubleClickEvent(self, event):
+        if self._polygon_kind is not None:
+            self.finish_polygon()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event):
+        if self._polygon_kind is not None and event.key() == Qt.Key.Key_Escape:
+            self.cancel_polygon()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
+        if self._polygon_kind is not None:
+            if event.button() == Qt.MouseButton.RightButton:
+                self.finish_polygon()
+            elif event.button() == Qt.MouseButton.LeftButton and len(self._polygon_points) < 512:
+                point = self.mapToScene(event.position().toPoint())
+                self._polygon_points.append((point.x(), point.y()))
+                if self._polygon_item is not None:
+                    self.scene().removeItem(self._polygon_item)
+                path = QPainterPath()
+                path.moveTo(*self._polygon_points[0])
+                for xy in self._polygon_points[1:]:
+                    path.lineTo(*xy)
+                pen = QPen(QColor(self.selection_color), 2)
+                pen.setCosmetic(True)
+                self._polygon_item = self.scene().addPath(path, pen)
+            event.accept()
+            return
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self.dragMode() == QGraphicsView.DragMode.RubberBandDrag
@@ -296,6 +364,9 @@ class Workbench(
     CommerceFeatures,
     MaterialFeatures,
     HelpFeedbackFeatures,
+    CandidateFeatures,
+    BlueprintFeatures,
+    WorkflowFeatures,
     QMainWindow,
 ):
     def __init__(self):
@@ -358,6 +429,7 @@ class Workbench(
         self.view_controls.setVisible(index == 0)
 
     def set_canvas_tool(self, pan):
+        self.canvas.cancel_polygon()
         self.canvas.setDragMode(
             QGraphicsView.DragMode.ScrollHandDrag if pan else QGraphicsView.DragMode.RubberBandDrag
         )
@@ -399,6 +471,8 @@ class Workbench(
         self.document_title.setText(title)
         self.document_title.setToolTip(title)
         state = "有未保存修改" if self.dirty else "已保存" if self.project_path else "示例 · 未保存"
+        if self.draft.source_schema < 2:
+            state += " · 旧格式，保存将另存升级副本"
         self.document_state.setText(state)
 
     @staticmethod
@@ -477,7 +551,7 @@ class Workbench(
                 f"{len(mapping)} 色  /  画心 {physical.width_cm} × "
                 f"{physical.height_cm} cm\n"
                 f"生产 {physical.canvas_px[0]} × {physical.canvas_px[1]} px\n"
-                + ("已记录母版审核" if self.draft.entities.get("freeze") else "待审查/冻结")
+                + ("已记录母版审核" if self.review_current() else "待审查/冻结")
             )
             self.metrics.setText(
                 f"{design.width} × {design.height} 格   |   {len(mapping)} 色   |   "
@@ -493,7 +567,7 @@ class Workbench(
                 + self.delivery_options_summary()
             )
             self.export_review.setText(
-                "已记录当前母版审核" if self.draft.entities.get("freeze") else "待审查与冻结"
+                "已记录当前母版审核" if self.review_current() else "待审查与冻结"
             )
             self.update_document_state()
             selected_items = self.table.selectedItems()
@@ -674,6 +748,11 @@ class Workbench(
             self.draft.entities["design"] = previous["design"]
             self.draft.entities["mapping"] = previous["mapping"]
             self.draft.entities["freeze"] = previous["freeze"]
+            for key in ("active_conversion", "active_candidate"):
+                if previous.get(key) is None:
+                    self.draft.entities.pop(key, None)
+                else:
+                    self.draft.entities[key] = previous[key]
             self.review_regions = []
             self.region = None
             self.canvas.draw_selection(None)
@@ -689,6 +768,8 @@ class Workbench(
             "design": self.design.to_dict(),
             "mapping": copy.deepcopy(self.draft.entities.get("mapping")),
             "freeze": copy.deepcopy(self.draft.entities.get("freeze")),
+            "active_conversion": copy.deepcopy(self.draft.entities.get("active_conversion")),
+            "active_candidate": copy.deepcopy(self.draft.entities.get("active_candidate")),
         }
         self.history.append(old)
         self.draft.entities[f"revision:{self.design.revision_id}"] = old
@@ -706,6 +787,13 @@ class Workbench(
         try:
             if len(self.review_regions) < 2:
                 raise StitchPressError("请在图上选择并检查至少两处不同局部，再登记整体/负空间审核")
+            if not any(
+                k.startswith("quality:") and v.get("design_sha") == self.design.content_sha
+                for k, v in self.draft.entities.items()
+            ):
+                self.statusBar().showMessage("请先完成当前母版数字检查，再登记人工审核")
+                self.inspect_master()
+                return
             dialog = QDialog(self)
             dialog.setWindowTitle("登记当前母版审核")
             form = QFormLayout(dialog)
@@ -735,8 +823,12 @@ class Workbench(
                 checks[1].isChecked(),
                 checks[2].isChecked(),
                 notes.text(),
+                **review_context(self.draft),
+                reviewed_at=datetime.now(UTC).isoformat(),
             )
             record.validate(self.design)
+            if old := self.draft.entities.get("freeze"):
+                self.draft.entities[f"freeze:{uuid4().hex}"] = {"record": old, "reason": "重新审核"}
             self.draft.entities["freeze"] = asdict(record)
             self.dirty = True
             self.refresh()
@@ -822,6 +914,10 @@ class Workbench(
         if not self.apply_fields():
             return False
         if self.coordinator is None:
+            return self.save_as()
+        from .store import PROJECT_SCHEMA
+
+        if self.coordinator.project.source_schema < PROJECT_SCHEMA:
             return self.save_as()
         try:
             changes = {
@@ -957,6 +1053,7 @@ class Workbench(
                 raise StitchPressError("原图须为单帧且不超过4000万像素")
             image.load()
         if self.source_image is None or sha256(data) != sha256(self.source_image):
+            self.invalidate_review("对照源图改变")
             for key in ("source", "input_profile"):
                 if old := self.draft.entities.pop(key, None):
                     self.draft.entities[f"{key}:{uuid4().hex}"] = old
@@ -1053,6 +1150,7 @@ class Workbench(
             "include_image": job.get("include_image", True),
             "context_sha": context_sha,
             "folder": folder,
+            "candidate_key": job.get("candidate_key"),
             **({"cancel_file": Path(job["cancel_file"])} if job.get("cancel_file") else {}),
         }
         self.process = QProcess(self)
@@ -1177,13 +1275,19 @@ class Workbench(
                 from .jobs import find_receipt
 
                 receipt = find_receipt(job["work"], job["destination"])
-                success = exit_code == 0 and receipt is not None
+                success = receipt is not None
                 if success and job["project_id"] == self.draft.project_id:
                     self.draft.entities[f"export:{receipt['job_id']}"] = receipt
                     self.dirty = True
                     self.update_document_state()
                 self.statusBar().showMessage(
-                    "导出完成 · 待人工外观检查" if success else "导出失败或已取消 · 未发布完整交付"
+                    (
+                        "导出文件已核验恢复 · 执行回执曾中断，待人工外观检查"
+                        if exit_code != 0 or receipt.get("recovered_publish")
+                        else "导出完成 · 待人工外观检查"
+                    )
+                    if success
+                    else "未取得完整交付核验 · 请检查任务记录，原母版保持可用"
                 )
                 return
             if not job["output"].exists():
@@ -1218,6 +1322,36 @@ class Workbench(
                     "待人工外观检查"
                 )
                 return
+            if job["operation"] in {"convert", "convert-region", "migrate-candidate"}:
+                if job["project_id"] != self.draft.project_id:
+                    self.log.append(f"原作品候选已保存在任务记录：{job['output']}")
+                    return
+                current = job["context_sha"] == context_fingerprint(
+                    self, job["operation"], job["include_image"]
+                )
+                key = self.record_candidate(
+                    result["result"], base_sha=job["base_sha"], context_sha=job["context_sha"]
+                )
+                if not current:
+                    self.log.append(f"原分支候选已保留：{key}；上下文改变，未自动打开或采用")
+                    return
+                self.start_worker(
+                    "compare-candidate", {"candidate_key": key, "include_image": False}
+                )
+                return
+            if job["operation"] in {"blueprint-import", "blueprint-composite"}:
+                if job["project_id"] != self.draft.project_id:
+                    self.log.append(f"原作品蓝图已保存在任务记录：{job['output']}")
+                    return
+                current = job["context_sha"] == context_fingerprint(
+                    self, job["operation"], job["include_image"]
+                )
+                key = self.attach_blueprint(result["result"], job)
+                if current:
+                    self.show_blueprint(key)
+                else:
+                    self.log.append(f"原分支蓝图已留存：{key}；当前输入已变，未自动采用")
+                return
             same = (
                 job["project_id"] == self.draft.project_id
                 and result["base_sha"] == self.design.content_sha
@@ -1231,6 +1365,9 @@ class Workbench(
             )
             if not same:
                 self.log.append(f"旧分支候选已保留：{job['output']}；当前母版未更改")
+                return
+            if job["operation"] == "compare-candidate":
+                self.show_candidate_comparison(result["result"])
                 return
             if job["operation"] == "plan":
                 self.statusBar().showMessage("分页计划已完成，正在查看实际布局")

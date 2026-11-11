@@ -150,6 +150,8 @@ class BriefFeatures:
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             brief = dialog.value()
+            if self.draft.entities.get("brief") != brief.to_dict():
+                self.invalidate_review("设计要求改变")
             if old := self.draft.entities.get("brief"):
                 self.draft.entities[f"brief:{uuid4().hex}"] = copy.deepcopy(old)
             self.draft.entities["brief"] = brief.to_dict()

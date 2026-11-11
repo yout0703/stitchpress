@@ -2,18 +2,18 @@
 
 集 AI 辅助创作、来图制版、印花交付与商品展示于一体的十字绣桌面工作台。
 
-本项目已进入0.1.0.dev1本地实现阶段。设计覆盖“十字绣后期试用版”的主要功能，并把AI创作、来图重建与可绣母版审核纳入核心范围。Windows和macOS共用业务核心与作品格式，分别构建和验收。
+本项目已进入0.1.0.dev2本地实现阶段。设计覆盖“十字绣后期试用版”的主要功能，并把AI创作、来图重建与可绣母版审核纳入核心范围。Windows和macOS共用业务核心与作品格式，分别构建和验收。
 
 已实现Mac桌面小样和本地制包核心；完整R1仍在开发，Windows、真实AI与工厂验收尚未完成。实际边界见[本地实现与技术验证](docs/12-本地实现与技术验证.md)。
 
 ```bash
-uv sync --all-groups
+uv sync --locked --all-groups
 uv run stitchpress-desktop
 # 检查
-uv run ruff check src tests tools
-QT_QPA_PLATFORM=offscreen uv run pytest -q
+uv run --all-groups ruff check src tests tools
+QT_QPA_PLATFORM=offscreen uv run --all-groups pytest -q
 # 在目标系统本机构建
-uv run --group build python tools/build_desktop.py
+uv run --all-groups python tools/build_desktop.py
 ```
 
 Mac本机通过PyInstaller构建，试用应用生成于 `dist/macos/StitchPress.app`。开发样本和检查留底在 `reports/local/`；安装包及客户资源不推送到Git。
@@ -72,3 +72,5 @@ StitchPress 是独立项目。原生产项目只作为资源、流程与样本�
 默认DeepSeek Flash，模型ID `deepseek-flash`，支持文字/图片需求分析设置。用户稍后在软件中配置API密钥，密钥只存本机系统安全存储；保存配置不调用模型。图像生成/编辑单独配置，用户已确认图像服务先保持待接入，当前不可据此生成图片；配置入口保留，待后续确定供应商再接生成/编辑适配。
 
 客户资源在本机`.local/`通过导入使用，不随Git或通用安装包分发；示例仅使用自有测试图。当前未加入云上传、客户通知或自动计费调用。
+
+本轮R1本地接续见[候选、修订迁移与流程检查点](docs/15-R1本地接续与验收.md)。当前作品容器为schema 2；schema 1可打开，保存时须另存新副本。命令行也可运行 `uv run stitchpress migrate 旧作品.stitchpress 新副本.stitchpress`，保留原文件和资源。旧版程序不能读回schema 2。

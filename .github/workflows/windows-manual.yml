@@ -1,0 +1,51 @@
+name: Windows local-core build (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - run: uv sync --locked --all-groups
+      - run: uv run --all-groups ruff check src tests tools
+      - run: uv run --all-groups ruff format --check src tests tools
+      - run: uv run --all-groups pytest -q --junitxml=reports/local/windows/tests.xml
+      - run: uv run --all-groups python tools/build_desktop.py
+      - name: Verify packaged executable and Chinese installation directory
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse dist/windows/StitchPress "dist/windows/绣印工坊测试"
+          uv run --all-groups python tools/smoke_bundle.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --all-groups python tools/validate_bundle_revisions.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/revisions
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --all-groups python tools/validate_bundle_extensions.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/extensions
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path dist/windows/StitchPress -DestinationPath dist/windows/StitchPress-windows-x64-local.zip
+      - name: Retain checks and build logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-checks-${{ github.run_id }}
+          path: |
+            reports/local/windows/
+            dist/windows/build.log
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Retain unsigned local test application
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-app-${{ github.run_id }}
+          path: dist/windows/StitchPress-windows-x64-local.zip
+          retention-days: 7

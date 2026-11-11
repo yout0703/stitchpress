@@ -17,3 +17,19 @@ def test_source_and_compiled_worker_modes(monkeypatch):
     assert launch.is_compiled()
     assert launch.worker_arguments("cli", ["doctor"]) == ["--internal-cli", "doctor"]
     assert Path(launch.worker_program()) == Path("/tmp/test/StitchPressDesktop").resolve()
+
+
+def test_windowed_cli_file_report_does_not_require_stdout(tmp_path, monkeypatch):
+    import json
+
+    from stitchpress.__main__ import main
+
+    report = tmp_path / "中文回执.json"
+    monkeypatch.setattr(
+        sys, "argv", ["StitchPress", "--internal-cli-report", str(report), "doctor"]
+    )
+    assert main() == 0
+    response = json.loads(report.read_bytes())
+    assert response["exit_code"] == 0 and not response["stderr"]
+    doctor = json.loads(response["stdout"])
+    assert doctor["app"] and doctor["libtiff"]

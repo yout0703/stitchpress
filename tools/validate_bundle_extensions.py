@@ -30,15 +30,19 @@ def main():
     }
 
     def run(name, arguments):
+        report_path = root / f"{name}-cli.json"
         process = subprocess.run(
-            [str(binary), "--internal-cli", *arguments],
+            [str(binary), "--internal-cli-report", str(report_path), *arguments],
             capture_output=True,
             text=True,
             cwd=root,
             env=env,
             timeout=180,
         )
-        (root / f"{name}.log").write_text(process.stdout + "\n" + process.stderr)
+        report = json.loads(report_path.read_bytes()) if report_path.exists() else {}
+        (root / f"{name}.log").write_text(
+            report.get("stdout", process.stdout) + "\n" + report.get("stderr", process.stderr)
+        )
         if process.returncode:
             raise RuntimeError(f"{name} failed; see log in {root}")
 

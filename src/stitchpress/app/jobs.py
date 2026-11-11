@@ -42,6 +42,14 @@ def find_receipt(work: Path, destination: Path, request_id=None):
                 request_id is None or record.get("request_id") == request_id
             ):
                 verify_delivery(destination, record)
+                if record.get("status") != "completed":
+                    record = {
+                        **record,
+                        "status": "completed",
+                        "files": len(record["artifacts"]),
+                        "recovered_publish": True,
+                        "original_status": record.get("status"),
+                    }
                 return record
         except (OSError, ValueError, KeyError, TypeError, StitchPressError):
             continue

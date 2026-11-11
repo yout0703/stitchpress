@@ -125,6 +125,11 @@ def build_workspace(w, canvas_type):
             (
                 ("恢复未保存草稿…", w.recover_draft),
                 ("恢复保存历史…", w.restore_version),
+                ("针格候选与修订比较…", w.candidate_browser),
+                ("制版流程与检查点…", w.workflow_board),
+                ("导入蓝图候选…", w.import_blueprint_candidate),
+                ("蓝图版本与比较…", w.blueprint_browser),
+                ("同画幅局部图像合成…", w.local_image_candidate),
             ),
         ),
         (
@@ -282,6 +287,7 @@ def build_workspace(w, canvas_type):
     master, ml = frame("masterPanel", margins=(20, 18, 20, 18))
     w.canvas = canvas_type()
     w.canvas.region_selected.connect(w.select_region)
+    w.canvas.polygon_selected.connect(w.annotate_polygon)
     w.canvas.zoom_changed.connect(lambda value: w.zoom_label.setText(f"{value:.0f}%"))
     ml.addWidget(w.canvas, 1)
     w.canvas_splitter.addWidget(master)
@@ -320,6 +326,14 @@ def build_workspace(w, canvas_type):
     mask_menu.addAction("标注主体有针（下次转换）", lambda: w.annotate_region("subject"))
     mask_menu.addAction("标注负空间留空（下次转换）", lambda: w.annotate_region("blank"))
     mask_menu.addAction("保护选区（禁止局部改针）", lambda: w.annotate_region("protected"))
+    mask_menu.addSeparator()
+    for text, kind in (
+        ("多边形主体有针…", "subject"),
+        ("多边形负空间留空…", "blank"),
+        ("多边形保护区…", "protected"),
+    ):
+        mask_menu.addAction(text, lambda checked=False, value=kind: w.start_polygon_mask(value))
+    mask_menu.addAction("管理/移除单处标注…", w.manage_annotations)
     mask_menu.addSeparator()
     mask_menu.addAction("清除当前蒙版（旧记录保留）", w.clear_annotations)
     mask.setMenu(mask_menu)
@@ -392,7 +406,10 @@ def build_inspector(w):
     w.source_label = label("尚未选择蓝图；干净平面图可直接转换", "muted", True)
     sf.addRow(w.source_label)
     sf.addRow(button(w, "选择图片…", w.choose_image, "mdi6.image-outline"))
+    sf.addRow(button(w, "蓝图候选与版本…", w.blueprint_browser))
     sf.addRow(button(w, "本地转换候选", w.convert, role="outline"))
+    sf.addRow(button(w, "只转换当前选区为候选", w.convert_selection, role="outline"))
+    sf.addRow(button(w, "针格候选与修订…", w.candidate_browser))
     pl.addWidget(source)
     for field in (w.grid_w, w.grid_h, w.color_limit):
         field.valueChanged.connect(w.capture_conversion_options)
@@ -421,6 +438,7 @@ def build_ai(w):
     sl.addWidget(label("DeepSeek Flash · 文字 / 图片理解", "document"))
     sl.addStretch()
     sl.addWidget(button(w, "配置 AI 服务", w.ai_settings, "mdi6.cog-outline"))
+    sl.addWidget(button(w, "制版流程与检查点…", w.workflow_board, "mdi6.source-branch"))
     al.addWidget(service)
     brief_card, brief_layout = frame("pageCard")
     brief_layout.addWidget(
@@ -429,6 +447,11 @@ def build_ai(w):
     w.brief_summary = label("", "muted", True)
     brief_layout.addWidget(w.brief_summary)
     al.addWidget(brief_card)
+    blueprint_row = QHBoxLayout()
+    blueprint_row.addWidget(button(w, "导入蓝图候选…", w.import_blueprint_candidate))
+    blueprint_row.addWidget(button(w, "蓝图版本与比较…", w.blueprint_browser))
+    blueprint_row.addWidget(button(w, "局部图像合成…", w.local_image_candidate))
+    al.addLayout(blueprint_row)
     history_row = QHBoxLayout()
     history_row.addWidget(button(w, "调用计划…", w.ai_plan, "mdi6.counter"))
     history_row.addWidget(button(w, "任务记录与恢复…", w.task_inbox, "mdi6.history"))

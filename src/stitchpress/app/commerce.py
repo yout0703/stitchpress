@@ -45,6 +45,7 @@ def export_commerce(
         if not context["review"]:
             raise StitchPressError("正式商品素材须绑定已人工审核母版；未审核可使用明确草稿模式")
         context["review"].validate(context["design"])
+        context["review"].validate_context(context["review_context"])
     destination = Path(destination)
     work = Path(work)
     if destination.exists():

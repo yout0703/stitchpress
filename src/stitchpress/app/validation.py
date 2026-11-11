@@ -37,6 +37,15 @@ def validate_entities(entities: dict, assets: dict[str, bytes]):
             raise StitchPressError("作品实体包含不可携带的数据类型")
 
     json_value(entities)
+    for key, record in entities.items():
+        if key.startswith("blueprint:"):
+            from stitchpress.core.blueprints import check_blueprint
+
+            check_blueprint(record, assets)
+        if key.startswith("candidate:") and isinstance(record, dict) and record.get("design"):
+            candidate = Design.from_dict(record["design"])
+            if record.get("result_sha", candidate.content_sha) != candidate.content_sha:
+                raise StitchPressError("针格候选SHA与实际矩阵不一致")
     if any(
         v is not None and not isinstance(v, dict) for k, v in entities.items() if k != "mapping"
     ):

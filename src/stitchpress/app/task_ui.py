@@ -185,8 +185,15 @@ class TaskFeatures:
         def attach():
             try:
                 path, record = selected()
-                if not path or record["operation"] not in {"analyze", "convert"}:
-                    raise StitchPressError("请选择有本机结果的分析或转换任务")
+                if not path or record["operation"] not in {
+                    "analyze",
+                    "convert",
+                    "convert-region",
+                    "migrate-candidate",
+                    "blueprint-import",
+                    "blueprint-composite",
+                }:
+                    raise StitchPressError("请选择有本机结果的分析、蓝图或针格候选任务")
                 if record["context_sha"] != context_fingerprint(
                     self, record["operation"], record.get("include_image", True)
                 ):
@@ -200,18 +207,33 @@ class TaskFeatures:
                 if record["operation"] == "analyze":
                     self.draft.entities[f"ai:{record['task_id']}"] = result
                     self.ai_result.setPlainText(json.dumps(result, ensure_ascii=False, indent=2))
-                else:
-                    self.draft.entities[f"candidate:{record['task_id']}"] = result
+                elif record["operation"].startswith("blueprint-"):
+                    from stitchpress.core.identity import sha256
+
+                    payload = (path.parent / "input.stitchpress").read_bytes()
+                    if sha256(payload) != record["input_sha"]:
+                        raise StitchPressError("任务输入快照已改变，不能恢复")
+                    snapshot = Project.decode(payload)
                     from stitchpress.core.models import Design
 
-                    if (
-                        QMessageBox.question(
-                            dialog, "采用恢复的候选？", "旧母版与补丁保留；仍须重新人工审核。"
-                        )
-                        == QMessageBox.StandardButton.Yes
-                    ):
-                        self.adopt_design(Design.from_dict(result["design"]))
-                        self.draft.entities["active_conversion"] = result["conversion"]
+                    source = snapshot.entities.get("source")
+                    key = self.attach_blueprint(
+                        result,
+                        {
+                            "base_sha": Design.from_dict(snapshot.entities["design"]).content_sha,
+                            "source_sha": sha256(snapshot.assets[source["asset"]])
+                            if source
+                            else None,
+                        },
+                    )
+                    dialog.accept()
+                    self.show_blueprint(key)
+                else:
+                    key = self.record_candidate(result, context_sha=record["context_sha"])
+                    dialog.accept()
+                    self.start_worker(
+                        "compare-candidate", {"candidate_key": key, "include_image": False}
+                    )
                 self.dirty = True
                 self.update_document_state()
                 dialog.accept()

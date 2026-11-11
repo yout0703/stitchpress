@@ -128,6 +128,39 @@ def export_plan(
     )
 
 
+def export_snapshot(context, *, targets=FULL_TARGETS, demo=False):
+    """One source of truth for export receipts and workflow freshness checks."""
+    design, library = context["design"], context["library"]
+    mapping, fabric = context["mapping"], context["fabric"]
+    code, title = context["code"], context["title"]
+    reference = context.get("reference") or ReferenceSettings()
+    showcase_options = context.get("showcase_options") or ShowcaseSettings()
+    text_layers, material_rules = context.get("text_layers"), context.get("material_rules", ())
+    review_context, font_data = context.get("review_context"), context.get("font_data")
+    catalog = context.get("catalog", ())
+    return {
+        "design_sha": design.content_sha,
+        "library": library.revision,
+        "icc_sha": sha256(library.icc) if library.icc else None,
+        "mapping": mapping,
+        "fabric": asdict(fabric),
+        "code": code,
+        "title": title,
+        "engine": __version__,
+        "pipeline": PIPELINE_REVISION,
+        "reference": reference.to_dict(),
+        "showcase": showcase_options.to_dict(),
+        "targets": sorted(targets),
+        "text_layers": text_layers or {},
+        "material_rules": material_rules,
+        "review_context": review_context,
+        "font_sha": sha256(font_data or bundled_font().read_bytes()),
+        "symbol_pixels": {s.key: s.pixel_sha for s in library.symbols},
+        "catalog_membership": [c.key for c in catalog],
+        "demo": demo,
+    }
+
+
 def export_package(
     *,
     design: Design,
@@ -139,6 +172,7 @@ def export_package(
     destination: Path,
     work: Path,
     review: ReviewRecord | None,
+    review_context: dict | None = None,
     catalog: tuple[ThreadColor, ...] = (),
     demo: bool = False,
     reference: ReferenceSettings | None = None,
@@ -161,6 +195,7 @@ def export_package(
         if review is None:
             raise StitchPressError("母版尚未完成具名审核冻结，不能生产")
         review.validate(design)
+        review.validate_context(review_context)
         validate_catalog_membership(design, catalog)
         if not library.icc or library.usage != "customer-imported":
             raise StitchPressError("正式印花需要导入客户符号和CMYK ICC，演示库不可生产")
@@ -187,26 +222,25 @@ def export_package(
     if shutil.disk_usage(destination.parent).free < estimate["estimated_workspace_bytes"]:
         raise StitchPressError("可用空间不足以容纳保守估算的工作文件、缓存与交付")
     started = monotonic()
-    snapshot = {
-        "design_sha": design.content_sha,
-        "library": library.revision,
-        "icc_sha": sha256(library.icc) if library.icc else None,
-        "mapping": mapping,
-        "fabric": asdict(fabric),
-        "code": code,
-        "title": title,
-        "engine": __version__,
-        "pipeline": PIPELINE_REVISION,
-        "reference": reference.to_dict(),
-        "showcase": showcase_options.to_dict(),
-        "targets": sorted(targets),
-        "text_layers": text_layers or {},
-        "material_rules": material_rules,
-        "font_sha": sha256(font_data or bundled_font().read_bytes()),
-        "symbol_pixels": {s.key: s.pixel_sha for s in library.symbols},
-        "catalog_membership": [c.key for c in catalog],
-        "demo": demo,
-    }
+    snapshot = export_snapshot(
+        dict(
+            design=design,
+            library=library,
+            mapping=mapping,
+            fabric=fabric,
+            code=code,
+            title=title,
+            reference=reference,
+            showcase_options=showcase_options,
+            text_layers=text_layers,
+            material_rules=material_rules,
+            review_context=review_context,
+            font_data=font_data,
+            catalog=catalog,
+        ),
+        targets=targets,
+        demo=demo,
+    )
     job_id = uuid4().hex
     expected_files = (
         (len(plan.pages) if "reference" in targets else 0)
@@ -274,6 +308,7 @@ def export_package(
             "title",
             "text_layers",
             "material_rules",
+            "review_context",
             "catalog_membership",
             "demo",
         }
@@ -430,6 +465,7 @@ def export_package(
             "dpi": fabric.dpi,
             "icc_sha": snapshot["icc_sha"],
             "master_sha": design.content_sha,
+            "review_context": review_context,
             "origin": design.origin,
             "demo": demo,
             "reference": reference.to_dict(),
@@ -471,9 +507,10 @@ def export_package(
                 raise StitchPressError("发布前产物被改写")
         # Factory ZIP contains only the N+6 files; receipts stay in the work area.
         stage("publishing")
-        if destination.exists():
-            raise StitchPressError("目标目录已由其他任务建立，未覆盖")
-        os.rename(staging, destination)
+        with exclusive_lock(destination.parent / f".{destination.name}.publish.lock"):
+            if destination.exists():
+                raise StitchPressError("目标目录已由其他任务建立，未覆盖")
+            os.rename(staging, destination)
         state.update(
             status="completed",
             files=expected,
