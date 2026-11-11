@@ -88,8 +88,13 @@ def import_xsd(data: bytes, encoding="gb18030"):
     w, h = r.number(), r.number()
     if min(w, h) < 1 or w * h > MAX_CELLS:
         raise StitchPressError("XSD针格超出试验版范围")
-    if r.number("I") or r.number():
-        raise StitchPressError("XSD包含小针/半针/回针/结粒等非全针记录")
+    small_count, joint_count = r.number("I"), r.number()
+    if small_count or joint_count:
+        raise StitchPressError(
+            f"此图纸含非全针内容：小针记录 {small_count:,}，线段/结粒等记录 {joint_count:,}。"
+            "当前印花流程仅支持全针；请在原制图软件中确认并另存全针版本，或保留原图纸使用原软件。"
+            "本次未导入，不会丢弃这些针法。"
+        )
     ct_x, ct_y = r.number(), r.number()
     if ct_x != ct_y or not 6 <= ct_x <= 40:
         raise StitchPressError("XSD导入目前只支持经纬相同的6–40 CT Aida")
@@ -145,9 +150,16 @@ def import_xsd(data: bytes, encoding="gb18030"):
     r.take(2)
     if r.number():
         raise StitchPressError("XSD包含特殊针法模型")
-    # Extra records are not silently discarded. This deliberately rejects some native variants.
-    if r.pos != len(data):
-        raise StitchPressError("XSD含未识别尾部记录，当前无法确认其针法语义")
+    # All stitch-bearing sections are exhausted (small/joint/model counts are zero).
+    # Native PM v4 files may retain a 1/6 extension envelope after these sections.
+    # Independent PM parsers also stop after the joints section. Preserve the original
+    # bytes in the importing project's source asset; do not interpret this as stitches.
+    extension = data[r.pos :]
+    if extension and not extension.startswith(struct.pack("<II", 1, 6)):
+        raise StitchPressError(
+            "此 XSD 的附加区格式尚未识别。请用 Pattern Maker v4 重新另存后导入；"
+            "原文件未修改，本次没有导入任何内容。"
+        )
     labels = []
     for offset, word in enumerate(words):
         kind, index = word >> 24, (word >> 16) & 255
@@ -158,7 +170,12 @@ def import_xsd(data: bytes, encoding="gb18030"):
         else:
             raise StitchPressError(f"XSD第{offset + 1}格含未知针法或非法色板索引")
     report = {
-        "parser": "pmaker-v4-full-v1",
+        "parser": "pmaker-v4-full-v2",
+        "native_extension": {
+            "bytes": len(extension),
+            "sha256": sha256(extension) if extension else None,
+            "handling": "preserved-in-original-source; not interpreted or re-exported",
+        },
         "ct": ct_x,
         "title": title,
         "author": author,

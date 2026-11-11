@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -64,14 +65,22 @@ class SpecificationDialog(QDialog):
         tabs = self.tabs = QTabWidget()
         layout.addWidget(tabs)
         fabric_page = QWidget()
-        form = QFormLayout(fabric_page)
+        fabric_columns = QHBoxLayout(fabric_page)
+        fabric_columns.setSpacing(28)
+        dimensions, margins = QWidget(), QWidget()
+        fabric_columns.addWidget(dimensions, 1)
+        fabric_columns.addWidget(margins, 1)
+        form = QFormLayout(dimensions)
+        heading = QLabel("画心尺寸")
+        heading.setProperty("role", "sectionLabel")
+        form.addRow(heading)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.setVerticalSpacing(16)
         self.fabric_fields = {
             k: QLineEdit() for k in ("sx", "sy", "left", "top", "right", "bottom", "nominal_ct")
         }
         for field in self.fabric_fields.values():
-            field.setMaximumWidth(180)
+            field.setMaximumWidth(110)
         self.margin_unit = QComboBox()
         for text, unit in (("厘米 cm", "cm"), ("毫米 mm", "mm"), ("实际针格数", "cells")):
             self.margin_unit.addItem(text, unit)
@@ -84,6 +93,7 @@ class SpecificationDialog(QDialog):
         theoretical = QPushButton("按布号计算")
         theoretical.clicked.connect(self.theoretical)
         line = QHBoxLayout()
+        line.setSpacing(10)
         line.addWidget(self.fabric_fields["nominal_ct"])
         line.addWidget(theoretical)
         line.addStretch()
@@ -97,11 +107,13 @@ class SpecificationDialog(QDialog):
         target.clicked.connect(self.apply_width)
         target.setToolTip("保持横纵实际格距比例，不改变针数")
         line = QHBoxLayout()
+        line.setSpacing(10)
         line.addWidget(self.target_width)
         line.addWidget(target)
         line.addStretch()
         form.addRow("目标宽度 cm", line)
         line = QHBoxLayout()
+        line.setSpacing(10)
         for key, title in (("sx", "横向"), ("sy", "纵向")):
             line.addWidget(QLabel(title))
             line.addWidget(self.fabric_fields[key])
@@ -110,12 +122,19 @@ class SpecificationDialog(QDialog):
         form.addRow("实际格距 cm", line)
         self.effective_ct = QLabel()
         self.effective_ct.setWordWrap(True)
+        self.effective_ct.setMinimumHeight(54)
+        self.effective_ct.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         form.addRow("等效 CT", self.effective_ct)
         for key in ("sx", "sy"):
             self.fabric_fields[key].textChanged.connect(self.update_effective_ct)
+        form = QFormLayout(margins)
+        heading = QLabel("布边与输出")
+        heading.setProperty("role", "sectionLabel")
+        form.addRow(heading)
         form.addRow("留白单位", self.margin_unit)
         for items in ((("left", "左"), ("right", "右")), (("top", "上"), ("bottom", "下"))):
             line = QHBoxLayout()
+            line.setSpacing(10)
             for key, title in items:
                 line.addWidget(QLabel(title))
                 line.addWidget(self.fabric_fields[key])
@@ -270,7 +289,7 @@ class SpecificationDialog(QDialog):
             if any(not value.is_finite() or value <= 0 for value in values):
                 raise ValueError()
             self.effective_ct.setText(
-                f"横向 {Decimal('2.54') / values[0]:.3f} CT · "
+                f"横向 {Decimal('2.54') / values[0]:.3f} CT\n"
                 f"纵向 {Decimal('2.54') / values[1]:.3f} CT"
             )
         except (InvalidOperation, ValueError):

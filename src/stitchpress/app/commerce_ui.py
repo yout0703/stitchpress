@@ -69,6 +69,8 @@ class CommerceDialog(QDialog):
             scene.setCurrentIndex(spec.scene)
             frame.setCurrentIndex(spec.frame)
             fields = {key: QLineEdit(getattr(spec, key)) for key in ("scale", "dx", "dy")}
+            for field in fields.values():
+                field.setMaximumWidth(140)
             border, mat = QSpinBox(), QSpinBox()
             for spin, value in ((border, spec.border), (mat, spec.mat)):
                 spin.setRange(0, 100)
@@ -105,13 +107,20 @@ class CommerceDialog(QDialog):
             reset = QPushButton("恢复内置背景")
             reset.clicked.connect(lambda _, index=i: self.reset_background(index))
             actions = QHBoxLayout()
+            actions.setSpacing(10)
             actions.addWidget(import_button)
             actions.addWidget(reset)
             actions.addStretch()
             right_form.addRow(actions)
             tabs.addTab(page, f"场景 {i + 1}")
         style = QWidget()
-        form = QFormLayout(style)
+        style_columns = QHBoxLayout(style)
+        style_columns.setSpacing(28)
+        copy_panel, style_panel = QWidget(), QWidget()
+        style_columns.addWidget(copy_panel, 1)
+        style_columns.addWidget(style_panel, 1)
+        form = QFormLayout(copy_panel)
+        style_form = QFormLayout(style_panel)
         self.text_fields = {
             k: QLineEdit(getattr(self.saved, k))
             for k in ("title", "footer", "closeup_x", "closeup_y", "closeup_zoom")
@@ -156,18 +165,21 @@ class CommerceDialog(QDialog):
             ("局部中心Y（0–1）", "closeup_y"),
             ("局部放大倍率", "closeup_zoom"),
         ]:
-            form.addRow(name, self.text_fields[key])
+            (style_form if key.startswith("closeup") else form).addRow(name, self.text_fields[key])
+            if key.startswith("closeup"):
+                self.text_fields[key].setMaximumWidth(120)
         form.addRow("标题设计像素", self.size)
         sizing_form.addRow("方图 DPI · 800×800 px", self.dpi)
         for name, key in [("底色RGB", "background"), ("文字RGB", "ink"), ("点缀RGB", "accent")]:
-            form.addRow(name, self.colors[key])
-        form.addRow("注意事项（自行核对材料依据）", self.care)
+            style_form.addRow(name, self.colors[key])
+        form.addRow(QLabel("注意事项 · 请核对材料依据"))
+        form.addRow(self.care)
         help_label = QLabel(
             "标题/页脚支持 {code}、{title}、{width}、{height}、{colors}、{stitches}、"
             "{width_cm}、{height_cm} 等；输出字体沿用作品设置。来源对比须有原图。"
         )
         help_label.setWordWrap(True)
-        form.addRow(help_label)
+        style_form.addRow(help_label)
         tabs.addTab(style, "内容与样式")
         tabs.addTab(sizing, "输出尺寸")
         square = QWidget()

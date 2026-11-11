@@ -203,3 +203,30 @@ def test_apply_actions_track_changes_and_restore_keeps_current_tab(qtbot, monkey
     assert w.post_preview_stack.currentIndex() == 0
     assert "正在生成" in w.preview_state.text()
     w.close()
+
+
+def test_editor_reload_hides_retired_buttons_and_preserves_compact_fields(qtbot):
+    from PySide6.QtCore import Qt
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.show()
+    panel = w.text_panel
+    old = panel.buttons
+    panel.reload()
+    assert old.isHidden()  # Deferred deletion must not leave a floating button box.
+    fields, _, colors, _ = next(iter(panel.editor.controls.values()))
+    assert fields["points"].maximumWidth() == 150
+    assert fields["dx_mm"].maximumWidth() == 150
+    assert all(box.maximumWidth() == 85 for box in colors)
+    assert w.spec_panel.editor.fabric_fields["sx"].maximumWidth() == 110
+    w.show_page(6)
+    w.ref_symbol_search.setText("int:12")
+    visible = [
+        w.ref_symbols.item(i)
+        for i in range(w.ref_symbols.count())
+        if not w.ref_symbols.item(i).isHidden()
+    ]
+    assert len(visible) == 1 and visible[0].text() == "12"
+    assert visible[0].data(Qt.ItemDataRole.UserRole) == "int:12"
+    w.close()

@@ -29,12 +29,28 @@ def test_independent_oxs_expected_matrix():
         b"<backstitches><backstitch /></backstitches>",
         b"<partstitches><stitch /></partstitches>",
         b"<unknown />",
+        b"<format><stitch /></format>",
+        b"<format specialstitches='1' />",
+        b"<commentboxes><commentbox /></commentboxes>",
     ],
 )
 def test_s07_unknown_or_unsupported_oxs_rejected(extension):
     data = Path("fixtures/s01.oxs").read_bytes().replace(b"</chart>", extension + b"</chart>")
     with pytest.raises(StitchPressError):
         import_oxs(data)
+
+
+def test_oxs_format_comments_preserve_full_stitch_matrix():
+    data = Path("fixtures/s01.oxs").read_bytes()
+    compatible = data.replace(
+        b"</chart>",
+        b'<format comments01="Open Cross Stitch" comments02="Blank cells omitted" />'
+        b"<commentboxes /></chart>",
+    )
+    actual = import_oxs(compatible)
+    expected = import_oxs(data)
+    assert actual.labels == expected.labels
+    assert actual.counts == expected.counts
 
 
 def test_counts_formula_and_cached_integer(tmp_path, minimal):

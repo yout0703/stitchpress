@@ -16,6 +16,8 @@ def import_oxs(data: bytes) -> Design:
         if root.tag != "chart":
             raise StitchPressError("仅支持OXS 1.0 chart根元素")
         allowed = {
+            "format",
+            "commentboxes",
             "properties",
             "palette",
             "fullstitches",
@@ -26,6 +28,10 @@ def import_oxs(data: bytes) -> Design:
         for node in root:
             if node.tag not in allowed:
                 raise StitchPressError(f"未知OXS记录：{node.tag}")
+            if node.tag == "format":
+                if len(node) or any(not re.fullmatch(r"comments\d+", k) for k in node.attrib):
+                    raise StitchPressError("未知OXS格式说明，无法确认是否包含针法")
+                continue
             if node.tag not in {"properties", "palette", "fullstitches"} and len(node):
                 raise StitchPressError(f"不支持非全针记录：{node.tag}，数量{len(node)}")
         for tag in ("properties", "palette", "fullstitches"):

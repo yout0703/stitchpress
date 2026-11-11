@@ -27,6 +27,8 @@ ROUTES = (
 def menu_button(title, items):
     button = QToolButton()
     button.setText(title)
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    button.setMinimumWidth(86)
     button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     button.setProperty("role", "quiet")
     menu = QMenu(button)

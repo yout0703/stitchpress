@@ -1,6 +1,7 @@
 """Transactional reference-workflow actions, shared by native UI and local checks."""
 
 import copy
+import json
 import re
 from pathlib import Path
 from uuid import uuid4
@@ -23,6 +24,12 @@ def import_pattern(project, path):
     raw = path.read_bytes()
     design = import_xsd(raw)
     library = library_from_assets(project.entities["library"], project.assets)
+    used = sum(count > 0 for count in design.counts)
+    if used > len(library.symbols):
+        raise StitchPressError(
+            f"图纸有 {used} 种线色，当前符号库只有 {len(library.symbols)} 个符号。"
+            f"请先到“符号与配线 → 选择符号库”选择至少 {used} 个符号的库，再导入此图纸。"
+        )
     mapping = assign_symbols(design, library, strategy="color-nearest-v1")
     updated = copy.deepcopy(project)
     for key in (
@@ -48,6 +55,13 @@ def import_pattern(project, path):
         pattern_input=dict(asset=asset, format="xsd", sha256=sha256(raw), filename=path.name),
         mapping_policy=dict(algorithm="color-nearest-v1", manual_first=True),
     )
+    if project.entities.get("metadata", {}).get("code") == "DEMO001":
+        report = json.loads(dict(design.provenance)["import_report"])
+        updated.entities["metadata"] = {
+            **updated.entities.get("metadata", {}),
+            "title": report.get("title", "").strip() or path.stem,
+            "code": path.stem,
+        }
     updated.encode()
     return updated
 

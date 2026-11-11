@@ -84,7 +84,8 @@ def apply_appearance(app: QApplication, root, theme):
             padding: 9px 12px; min-height: 22px; }
         QPushButton[role="navigation"]:checked { background: $selected; color: $accent; }
         QListWidget { background: $raised; border: 1px solid $line; border-radius: 6px; }
-        QFrame#overviewCard { background: $panel; border: 1px solid $line; border-radius: 14px; }
+        QFrame#sourceCard, QFrame#overviewCard { background: $panel;
+            border: 1px solid $line; border-radius: 14px; }
         QWidget#editorSurface, QWidget#editorSurface QStackedWidget { background: $panel; }
         QLabel[role="emptyState"] { background: $canvas; color: $muted; font-size: 15px;
             border-radius: 10px; }
@@ -132,7 +133,9 @@ def apply_appearance(app: QApplication, root, theme):
         QComboBox QAbstractItemView { background: $panel; color: $text;
             selection-background-color: $selected; selection-color: $text;
             border: 1px solid $line; }
-        QSpinBox::up-button, QSpinBox::down-button { width: 17px; }
+        QSpinBox::up-button, QSpinBox::down-button { width: 18px;
+            border: none; border-left: 1px solid $line; background: transparent; }
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: $hover; }
         QSpinBox::up-arrow { image: url("$chevron_up"); width: 11px; height: 11px; }
         QSpinBox::down-arrow { image: url("$chevron_down"); width: 11px; height: 11px; }
         QCheckBox { spacing: 8px; padding: 5px 0; }
@@ -168,7 +171,15 @@ def apply_appearance(app: QApplication, root, theme):
             border: 1px solid $line; padding: 5px; }
         QMenu::item { padding: 9px 20px; border-radius: 4px; }
         QMenu::item:selected { background: $selected; color: $accent; }
-        QToolButton::menu-indicator { width: 7px; }
+        QToolButton::menu-indicator { image: url("$chevron_down");
+            subcontrol-origin: padding; subcontrol-position: right center;
+            width: 12px; height: 12px; right: 6px; }
+        QToolButton[role="quiet"] { padding-right: 24px; }
+        QListWidget#symbolGallery { background: $panel; padding: 8px; }
+        QListWidget#symbolGallery::item { border: 1px solid transparent;
+            border-radius: 6px; padding: 8px; }
+        QListWidget#symbolGallery::item:selected { background: $selected; border-color: $accent; }
+        QListWidget#symbolGallery::item:hover { background: $hover; }
         QTabWidget::pane { border: none; background: $panel; top: 8px; }
         QTabBar::tab { background: transparent; color: $muted; padding: 10px 16px;
             border-bottom: 2px solid transparent; }

@@ -49,3 +49,22 @@ def safe_filename(value: str) -> str:
     }:
         name = f"_{name or 'untitled'}"
     return f"{name}-{sha256(value.encode('utf-8'))[:8]}"
+
+
+def valid_directory_name(value: str) -> bool:
+    """Validate a user-visible single directory name without appending a hash."""
+    return bool(
+        value
+        and len(value.encode("utf-8")) <= 240
+        and value == value.strip(" .")
+        and not re.search(r'[<>:"/\\|?*\x00-\x1f]', value)
+        and value.split(".")[0].upper()
+        not in {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            *(f"COM{i}" for i in range(1, 10)),
+            *(f"LPT{i}" for i in range(1, 10)),
+        }
+    )

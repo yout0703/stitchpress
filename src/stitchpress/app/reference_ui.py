@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -174,8 +173,11 @@ class EditorPanel(QWidget):
             else []
         )
         if self.editor:
-            self.form_scroll.takeWidget().deleteLater()
+            old_editor = self.form_scroll.takeWidget()
+            old_editor.hide()
+            old_editor.deleteLater()
             self.footer.removeWidget(self.buttons)
+            self.buttons.hide()
             self.buttons.deleteLater()
         ctor = {
             "spec": SpecificationDialog,
@@ -189,15 +191,15 @@ class EditorPanel(QWidget):
             tabs.tabBar().setExpanding(False)
         for form in self.editor.findChildren(QFormLayout):
             form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-            form.setVerticalSpacing(8)
+            form.setVerticalSpacing(14)
             form.setHorizontalSpacing(22)
         for field in self.editor.findChildren(QLineEdit):
-            field.setMaximumWidth(520)
+            field.setMaximumWidth(min(field.maximumWidth(), 420))
         for field in self.editor.findChildren(QComboBox):
-            field.setMaximumWidth(360)
+            field.setMaximumWidth(min(field.maximumWidth(), 300))
         for field in self.editor.findChildren(QSpinBox):
-            field.setMinimumWidth(110)
-            field.setMaximumWidth(150)
+            field.setMinimumWidth(min(field.maximumWidth(), 96))
+            field.setMaximumWidth(min(field.maximumWidth(), 140))
         for button in self.editor.findChildren(QPushButton):
             button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             button.clicked.connect(self.owner.mark_reference_pending)
@@ -372,9 +374,13 @@ class ReferenceFeatures:
         form.addRow("作品名称", self.ref_title)
         form.addRow("客户货号", self.ref_code)
         dl.addLayout(form)
-        source = QGroupBox("输入文件")
+        source = QFrame()
+        source.setObjectName("sourceCard")
         source.setMaximumWidth(780)
         sl = QVBoxLayout(source)
+        sl.setContentsMargins(20, 20, 20, 20)
+        sl.setSpacing(16)
+        sl.addWidget(text("图纸与对应原图"))
         import_action = action("导入 XSD…", self.import_reference_pattern)
         row(
             sl,
@@ -390,7 +396,11 @@ class ReferenceFeatures:
         )
         import_action.setProperty("role", "primary")
         self.ref_input_report = text("尚未导入图纸")
+        self.ref_input_report.setProperty("role", "muted")
         sl.addWidget(self.ref_input_report)
+        self.ref_dimensions = text("")
+        self.ref_dimensions.setProperty("role", "heading")
+        sl.addWidget(self.ref_dimensions)
         self.source_confirm = QCheckBox("已核对：对应原图与 XSD 为同一作品")
         self.source_confirm.toggled.connect(self.confirm_correspondence)
         sl.addWidget(self.source_confirm)
@@ -410,13 +420,15 @@ class ReferenceFeatures:
 
         preview = QFrame()
         preview.setObjectName("overviewCard")
+        preview.setMaximumHeight(510)
         pv = QVBoxLayout(preview)
         pv.setContentsMargins(20, 20, 20, 20)
         title = text("作品概览")
         title.setProperty("role", "heading")
         pv.addWidget(title)
         self.work_overview = Canvas()
-        self.work_overview.setMinimumSize(280, 340)
+        self.work_overview.setMinimumSize(260, 280)
+        self.work_overview.setMaximumHeight(460)
         self.work_overview.setDragMode(Canvas.DragMode.ScrollHandDrag)
         pv.addWidget(self.work_overview, 1)
         caption = text("当前针格母版 · 导出尺寸与符号请在检查页核对")
@@ -424,6 +436,7 @@ class ReferenceFeatures:
         pv.addWidget(caption)
         body.addWidget(details, 3)
         body.addWidget(preview, 2)
+        body.setAlignment(preview, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(body, 1)
 
         return page
@@ -462,8 +475,15 @@ class ReferenceFeatures:
             text("各 CT 独立输出配线 Excel。每色米数向上取整；每米针数需按材料规则确认。")
         )
         self.thread_table = QTableWidget(0, 4)
+        self.thread_table.verticalHeader().hide()
+        self.thread_table.verticalHeader().setDefaultSectionSize(40)
+        self.thread_table.setShowGrid(False)
+        self.thread_table.setAlternatingRowColors(True)
         self.thread_table.setHorizontalHeaderLabels(["CT", "每米针数", "系数来源", "已确认"])
         self.thread_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.thread_empty = text("还没有配线规则。添加布号和厂家确认的系数后，可输出配线表。")
+        self.thread_empty.setProperty("role", "muted")
+        form.addWidget(self.thread_empty)
         form.addWidget(self.thread_table)
         row(
             form,
@@ -504,35 +524,67 @@ class ReferenceFeatures:
         split = QSplitter()
         self.ref_symbols = QListWidget()
         self.ref_symbols.setViewMode(QListWidget.ViewMode.IconMode)
-        self.ref_symbols.setIconSize(QSize(52, 52))
+        self.ref_symbols.setObjectName("symbolGallery")
+        self.ref_symbols.setIconSize(QSize(40, 40))
+        self.ref_symbols.setGridSize(QSize(76, 82))
+        self.ref_symbols.setSpacing(6)
+        self.ref_symbols.setMovement(QListWidget.Movement.Static)
+        self.ref_symbols.setUniformItemSizes(True)
+        self.ref_symbols.setWordWrap(False)
         self.ref_symbols.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.ref_symbols.setMinimumWidth(260)
         self.ref_symbols.currentItemChanged.connect(self.show_reference_symbol)
-        split.addWidget(self.ref_symbols)
+        gallery = QWidget()
+        gl = QVBoxLayout(gallery)
+        gl.setContentsMargins(0, 0, 12, 0)
+        self.ref_symbol_search = QLineEdit()
+        self.ref_symbol_search.setPlaceholderText("查找符号名称或编号…")
+        self.ref_symbol_search.setClearButtonEnabled(True)
+        self.ref_symbol_search.textChanged.connect(self.filter_reference_symbols)
+        gl.addWidget(self.ref_symbol_search)
+        gl.addWidget(self.ref_symbols, 1)
+        split.addWidget(gallery)
         right = QWidget()
         rl = QVBoxLayout(right)
-        self.ref_symbol_zoom = QLabel("选择左侧符号，右侧选择线色")
-        self.ref_symbol_zoom.setMinimumHeight(130)
-        rl.addWidget(self.ref_symbol_zoom)
-        self.ref_symbol_actual = QLabel("实际格距小符号（100%像素）")
-        rl.addWidget(self.ref_symbol_actual)
+        rl.setContentsMargins(12, 0, 0, 0)
+        selection = QHBoxLayout()
+        selection.setSpacing(16)
+        self.ref_symbol_zoom = QLabel("符号")
+        self.ref_symbol_zoom.setFixedSize(72, 72)
+        self.ref_symbol_zoom.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        selection.addWidget(self.ref_symbol_zoom)
+        info = QVBoxLayout()
+        self.ref_symbol_name = text("选择符号与线色")
+        info.addWidget(self.ref_symbol_name)
+        hint = text("先选左侧符号，再选下方线色进行分配。")
+        hint.setProperty("role", "muted")
+        info.addWidget(hint)
+        selection.addLayout(info, 1)
+        self.ref_symbol_actual = QLabel()
+        self.ref_symbol_actual.setFixedSize(48, 48)
+        self.ref_symbol_actual.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        selection.addWidget(self.ref_symbol_actual)
+        rl.addLayout(selection)
         self.ref_mapping = QTableWidget(0, 4)
-        self.ref_mapping.setHorizontalHeaderLabels(
-            ["DMC / 线色", "针数", "精确符号 ID", "手动保护"]
-        )
+        self.ref_mapping.setHorizontalHeaderLabels(["线色", "针数", "符号", "绑定方式"])
+        self.ref_mapping.verticalHeader().hide()
+        self.ref_mapping.verticalHeader().setDefaultSectionSize(36)
+        self.ref_mapping.setShowGrid(False)
+        self.ref_mapping.setAlternatingRowColors(True)
         self.ref_mapping.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.ref_mapping.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.ref_mapping.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         rl.addWidget(self.ref_mapping)
         split.addWidget(right)
+        split.setSizes([420, 580])
         layout.addWidget(split, 1)
         self.keep_manual = QCheckBox("自动匹配时保留手动绑定（包含交换的两色）")
         self.keep_manual.setChecked(True)
         layout.addWidget(self.keep_manual)
         row(
             layout,
-            action("将所选符号分配 / 整体交换", self.bind_reference_symbol),
-            action("按着墨色接近自动匹配…", self.auto_reference_symbols),
+            action("分配给所选线色", self.bind_reference_symbol),
+            action("自动匹配…", self.auto_reference_symbols),
         )
         layout.addWidget(
             disclosure(
@@ -642,14 +694,17 @@ class ReferenceFeatures:
         ):
             form.addRow(name, widget)
         ol.addWidget(disclosure("高级输出设置", advanced))
-        apply_output = action("应用输出设置", self.apply_post_options)
-        row(ol, apply_output)
         ol.addWidget(text("每次生成独立目录。正式输出需客户符号库、CMYK ICC 与本次核对。"))
         ol.addStretch()
         options_scroll = QScrollArea()
         options_scroll.setWidgetResizable(True)
         options_scroll.setWidget(options)
-        self.post_tabs.addTab(options_scroll, "输出设置")
+        options_page = QWidget()
+        options_layout = QVBoxLayout(options_page)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        options_layout.addWidget(options_scroll, 1)
+        row(options_layout, action("应用输出设置", self.apply_post_options))
+        self.post_tabs.addTab(options_page, "输出设置")
         self.post_summary = text("尚未检查当前输出计划。")
         self.post_summary.setProperty("role", "muted")
         layout.addWidget(self.post_summary)
@@ -767,11 +822,12 @@ class ReferenceFeatures:
         self.source_confirm.setEnabled(bool(source))
         record = self.draft.entities.get("pattern_input", {})
         self.ref_input_report.setText(
-            f"原稿：{record.get('filename', '尚未导入 XSD')}\n"
-            f"{self.design.width} × {self.design.height} 格 · {sum(self.design.counts):,} 针 · "
-            f"{sum(n > 0 for n in self.design.counts)} 色 · "
-            f"空白 {self.design.width * self.design.height - sum(self.design.counts):,} 格\n"
-            f"对应原图：{source.get('filename', source.get('asset', '尚未绑定'))}"
+            f"图纸  {record.get('filename', '当前为内置示例，请导入自己的 XSD')}\n"
+            f"原图  {source.get('filename', source.get('asset', '尚未添加'))}"
+        )
+        self.ref_dimensions.setText(
+            f"{self.design.width} × {self.design.height} 格    "
+            f"{sum(self.design.counts):,} 针    {sum(n > 0 for n in self.design.counts)} 色"
         )
         self.ref_source_details.setText(f"原稿 SHA256：{record.get('sha256', '尚无记录')}")
         for panel in self.reference_panels:
@@ -780,6 +836,7 @@ class ReferenceFeatures:
         if project_changed or not self._post_or_threads_pending():
             options = PostSettings(**self.draft.entities.get("post", {}))
             self.thread_table.setRowCount(0)
+            self.thread_empty.setVisible(not options.thread_plans)
             for plan in options.thread_plans:
                 self.add_thread_row(plan=plan)
             for key, control in self.post_targets.items():
@@ -816,6 +873,7 @@ class ReferenceFeatures:
         plan = plan or {}
         index = self.thread_table.rowCount()
         self.thread_table.insertRow(index)
+        self.thread_empty.hide()
         for column, key in enumerate(("ct", "stitches_per_metre", "source_note")):
             self.thread_table.setItem(index, column, QTableWidgetItem(plan.get(key, "")))
         confirmed = QCheckBox("已核对")
@@ -828,6 +886,7 @@ class ReferenceFeatures:
         index = self.thread_table.currentRow()
         if index >= 0:
             self.thread_table.removeRow(index)
+            self.thread_empty.setVisible(self.thread_table.rowCount() == 0)
             self.mark_reference_pending()
 
     def thread_values(self):
@@ -892,7 +951,14 @@ class ReferenceFeatures:
             self.refresh()
             self.statusBar().showMessage("全针 XSD 已导入，原件与旧修订已留底；请确认货号及对应图")
         except Exception as exc:
-            self.error(exc)
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("图纸未导入")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setText("暂时无法导入这份图纸")
+            dialog.setInformativeText(str(exc) + "\n当前作品保持不变。")
+            dialog.setDetailedText("文件：" + Path(path).name)
+            dialog.addButton("知道了", QMessageBox.ButtonRole.AcceptRole)
+            dialog.exec()
 
     def accept_code_suggestion(self):
         record = self.draft.entities.get("pattern_input")
@@ -1006,7 +1072,20 @@ class ReferenceFeatures:
         self.ref_symbols.clear()
         for symbol in library.symbols:
             rgb = screen_rgb(symbol.image(), library.icc)
-            item = QListWidgetItem(QIcon(QPixmap.fromImage(ImageQt(rgb))), symbol.key)
+            label = (
+                str(symbol.external_id)
+                if symbol.key.startswith("int:")
+                else symbol.key.removeprefix("str:")
+            )
+            thumbnail = QPixmap.fromImage(ImageQt(rgb)).scaled(
+                40,
+                40,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+            item = QListWidgetItem(QIcon(thumbnail), label)
+            item.setToolTip(f"符号 {label} · 原始标识 {symbol.key}")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             rgb.close()
             item.setData(Qt.ItemDataRole.UserRole, symbol.key)
             self.ref_symbols.addItem(item)
@@ -1023,13 +1102,30 @@ class ReferenceFeatures:
                 (
                     f"{color.brand} {color.code}",
                     str(count),
-                    mapping[color.key],
-                    "保护" if color.key in manual else "自动",
+                    (
+                        mapping[color.key][4:]
+                        if mapping[color.key].startswith("int:")
+                        else mapping[color.key].removeprefix("str:")
+                    ),
+                    "手动" if color.key in manual else "自动",
                 )
             ):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.ItemDataRole.UserRole, color.key)
+                if col == 2:
+                    symbol = library.by_key[mapping[color.key]]
+                    rgb = screen_rgb(symbol.image(), library.icc)
+                    item.setIcon(QIcon(QPixmap.fromImage(ImageQt(rgb))))
+                    item.setToolTip(mapping[color.key])
+                    rgb.close()
                 self.ref_mapping.setItem(row_number, col, item)
+        self.filter_reference_symbols(self.ref_symbol_search.text())
+
+    def filter_reference_symbols(self, query):
+        query = query.strip().casefold()
+        for i in range(self.ref_symbols.count()):
+            item = self.ref_symbols.item(i)
+            item.setHidden(query not in (item.text() + " " + item.toolTip()).casefold())
 
     def show_reference_symbol(self, current, previous=None):
         if not current:
@@ -1040,13 +1136,14 @@ class ReferenceFeatures:
         )
         self.ref_symbol_zoom.setPixmap(
             QPixmap.fromImage(ImageQt(image)).scaled(
-                120,
-                120,
+                56,
+                56,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.FastTransformation,
             )
         )
-        self.ref_symbol_zoom.setToolTip(current.text())
+        self.ref_symbol_zoom.setToolTip(current.toolTip())
+        self.ref_symbol_name.setText("当前符号 · " + current.text())
         from stitchpress.core.layout import Fabric, decimal, px
 
         fabric = Fabric(**self.draft.entities["fabric"])
@@ -1077,7 +1174,8 @@ class ReferenceFeatures:
                     "整体交换",
                     f"符号已被另一线色占用。"
                     f"将同时交换两色符号，记录两项手动保护；"
-                    f"其他产物需重新生成。\n{mapping[key]} ↔ {chosen}",
+                    "其他产物需重新生成。\n"
+                    f"符号 {mapping[key].partition(':')[2]} ↔ {chosen.partition(':')[2]}",
                 )
                 != QMessageBox.StandardButton.Yes
             ):
@@ -1107,7 +1205,7 @@ class ReferenceFeatures:
                 QMessageBox.question(
                     self,
                     "应用颜色接近匹配",
-                    f"color-nearest-v1：保留 {len(manual)} 项手动绑定，"
+                    f"按颜色接近程度匹配：保留 {len(manual)} 项手动绑定，"
                     f"将改变 {changes} 项。\n重新生成后生效，旧映射保留。",
                 )
                 != QMessageBox.StandardButton.Yes
@@ -1237,12 +1335,16 @@ class ReferenceFeatures:
         QMessageBox.information(self, "输出检查详情", getattr(self, "_plan_detail", "尚未检查。"))
 
     def show_post_plan(self, result):
+        from decimal import Decimal
+
+        art_size = " × ".join(f"{Decimal(v):.3f}" for v in result["artwork_cm"])
+        cloth_size = " × ".join(f"{Decimal(v):.3f}" for v in result["cloth_cm"])
         self._post_plan_sha = post_fingerprint(self.draft)
         paper = result["paper_px"] or ("未选查图", "—")
         self._plan_detail = (
             f"{result['stitches']:,} 针 · {result['colors']} 色 · "
-            f"画心 {' × '.join(result['artwork_cm'])} cm · "
-            f"含留边 {' × '.join(result['cloth_cm'])} cm\n"
+            f"画心 {art_size} cm · "
+            f"含留边 {cloth_size} cm\n"
             f"生产 {result['production_px'][0]} × {result['production_px'][1]} px / "
             f"{result['production_dpi']} DPI\n"
             f"查图 {paper[0]} × {paper[1]} px / "
@@ -1255,7 +1357,7 @@ class ReferenceFeatures:
 
         self.post_summary.setText(
             f"{result['stitches']:,} 针 · {result['colors']} 色 · "
-            f"整布 {' × '.join(result['cloth_cm'])} cm\n"
+            f"整布 {cloth_size} cm\n"
             f"生产 {result['production_dpi']} DPI · 查图 {result['reference_dpi']} DPI / "
             f"{result['page_count']} 页 · 电商 {result['commerce_files']} 张"
         )
@@ -1330,7 +1432,7 @@ class ReferenceFeatures:
 
             options = options or PostSettings(**self.draft.entities.get("post", {}))
             preflight(self.draft, options, demo=self.post_demo.isChecked())
-            from stitchpress.core.identity import safe_filename
+            from stitchpress.core.identity import safe_filename, valid_directory_name
 
             name, ok = QInputDialog.getText(
                 self,
@@ -1340,8 +1442,10 @@ class ReferenceFeatures:
             )
             if not ok or not name.strip():
                 return
-            if name != safe_filename(name) or name in {".", ".."}:
-                raise StitchPressError("请使用不含路径分隔符的目录名")
+            if not valid_directory_name(name):
+                raise StitchPressError(
+                    "目录名不能包含路径分隔符或特殊字符，不能以空格或句点结尾，请使用简短名称。"
+                )
             destination = Path(self.post_folder.text()) / name
             cancel = settings_dir() / "work" / ("post-cancel-" + uuid4().hex)
             self.start_worker(

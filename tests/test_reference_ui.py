@@ -239,3 +239,41 @@ def test_local_worker_completion_clears_running_status(qtbot, tmp_path, monkeypa
     assert results == [dict(marker="plan")]
     assert w.statusBar().currentMessage() == "本地任务已完成"
     w.close()
+
+
+def test_export_dialog_default_and_custom_directory_reach_worker(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QInputDialog
+
+    from stitchpress.core.identity import valid_directory_name
+    from stitchpress.core.post import PostSettings
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    errors, launched = [], []
+    monkeypatch.setattr(w, "error", errors.append)
+    monkeypatch.setattr(
+        w, "start_worker", lambda operation, fields: launched.append((operation, fields))
+    )
+    w.post_folder.setText(str(tmp_path))
+    w.post_demo.setChecked(True)
+    options = PostSettings(targets=("production",))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: (kwargs["text"], True))
+    w.export_reference_output(options=options)
+    assert not errors and launched[-1][0] == "reference-export"
+    assert Path(launched[-1][1]["target"]).parent == tmp_path
+    for name in ("客户甲-第二次出图", "CT242-qa"):
+        monkeypatch.setattr(
+            QInputDialog, "getText", lambda *args, selected=name, **kwargs: (selected, True)
+        )
+        w.export_reference_output(options=options)
+        assert Path(launched[-1][1]["target"]).name == name
+    count = len(launched)
+    for name in ("../escape", "a/b", "a\\b", "NUL", "CON.txt", "bad.", ".", "..", "x" * 241):
+        assert not valid_directory_name(name)
+        monkeypatch.setattr(
+            QInputDialog, "getText", lambda *args, selected=name, **kwargs: (selected, True)
+        )
+        w.export_reference_output(options=options)
+    assert len(launched) == count and len(errors) == 9
+    w.dirty = False
+    w.close()

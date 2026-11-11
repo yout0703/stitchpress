@@ -45,7 +45,13 @@ class TextSettingsDialog(QDialog):
         self.extra_controls = {}
         for key, title in SLOTS.items():
             page = QWidget()
-            form = QFormLayout(page)
+            columns = QHBoxLayout(page)
+            columns.setSpacing(28)
+            typography, position = QWidget(), QWidget()
+            columns.addWidget(typography, 1)
+            columns.addWidget(position, 1)
+            form = QFormLayout(typography)
+            position_form = QFormLayout(position)
             saved = TextLayer(**owner.draft.entities.get("text_layers", {}).get(key, {}))
             enabled = QCheckBox("显示此栏（关闭会清除该栏基础文字）")
             enabled.setChecked(saved.enabled)
@@ -59,6 +65,7 @@ class TextSettingsDialog(QDialog):
             form.addRow(enabled)
             form.addRow(font)
             font_actions = QHBoxLayout()
+            font_actions.setSpacing(10)
             font_actions.addWidget(choose)
             font_actions.addWidget(reset)
             font_actions.addStretch()
@@ -77,13 +84,17 @@ class TextSettingsDialog(QDialog):
             align.setCurrentIndex(align.findData(saved.align))
             colors = []
             color_row = QHBoxLayout()
+            color_row.setSpacing(12)
             for label, value in zip("CMYK", saved.cmyk, strict=True):
                 box = QSpinBox()
                 box.setRange(0, 255)
                 box.setValue(value)
-                color_row.addWidget(QLabel(label))
+                channel = QVBoxLayout()
+                channel.setSpacing(4)
+                channel.addWidget(QLabel(label))
                 box.setMaximumWidth(85)
-                color_row.addWidget(box)
+                channel.addWidget(box)
+                color_row.addLayout(channel)
                 colors.append(box)
             for label, widget in [
                 ("文字模板", fields["template"]),
@@ -92,9 +103,12 @@ class TextSettingsDialog(QDialog):
                 ("左右偏移 mm", fields["dx_mm"]),
                 ("上下偏移 mm", fields["dy_mm"]),
             ]:
-                form.addRow(label, widget)
+                (position_form if widget in (fields["dx_mm"], fields["dy_mm"]) else form).addRow(
+                    label, widget
+                )
             color_row.addStretch()
-            form.addRow("印刷通道 0–255", color_row)
+            position_form.addRow(QLabel("印刷通道 · 0–255"))
+            position_form.addRow(color_row)
             preview = QLabel()
             preview.setWordWrap(True)
             form.addRow("字段替换预览", preview)
