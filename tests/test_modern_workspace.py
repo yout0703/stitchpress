@@ -155,3 +155,51 @@ def test_reference_page_cap_accepts_200_and_rejects_201(monkeypatch):
     )
     with pytest.raises(StitchPressError, match="200页"):
         reference_package.preflight(project, options, demo=True)
+
+
+def test_preview_target_change_and_pending_edits_hide_previous_image(qtbot, tmp_path):
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.show()
+    path = tmp_path / "rendered.png"
+    Image.new("RGB", (64, 80), "white").save(path)
+    result = dict(preview=str(path), checks=dict(target="production", preview_size=(64, 80)))
+    w.show_post_preview(result)
+    assert w.post_preview_stack.currentIndex() == 1
+    w.post_preview_target.setCurrentIndex(w.post_preview_target.findData("whole"))
+    assert w.post_preview_stack.currentIndex() == 0
+    w.show_post_preview(result)  # Late completion of the old target must not reappear.
+    assert w.post_preview_stack.currentIndex() == 0
+    w.post_preview_target.setCurrentIndex(w.post_preview_target.findData("production"))
+    w.spec_panel.editor.fabric_fields["sx"].setText("0.2")
+    w.show_post_preview(result)  # Pending forms are not yet in the worker fingerprint.
+    assert w.post_preview_stack.currentIndex() == 0
+    w.spec_panel.reload()
+    w.close()
+
+
+def test_apply_actions_track_changes_and_restore_keeps_current_tab(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    panel = w.commerce_panel
+    save = panel.buttons.button(QDialogButtonBox.StandardButton.Save)
+    assert not save.isEnabled()
+    original = copy.deepcopy(w.draft.entities)
+    panel.apply()
+    assert w.draft.entities == original  # A no-op must not append a history revision.
+    panel.editor.tabs.setCurrentIndex(1)
+    panel.editor.scenes[1]["fields"]["scale"].setText("0.9")
+    assert save.isEnabled()
+    panel.reload()
+    assert panel.editor.tabs.currentIndex() == 1
+    assert not panel.buttons.button(QDialogButtonBox.StandardButton.Save).isEnabled()
+    calls = []
+    monkeypatch.setattr(w, "start_worker", lambda operation, job: calls.append((operation, job)))
+    w.open_commerce_preview()
+    assert calls[0][0] == "post-preview"
+    assert calls[0][1]["target"] == "detail-scene-2"
+    assert w.post_preview_stack.currentIndex() == 0
+    assert "正在生成" in w.preview_state.text()
+    w.close()

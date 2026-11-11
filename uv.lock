@@ -630,7 +630,7 @@ wheels = [
 
 [[package]]
 name = "stitchpress"
-version = "0.1.0.dev4"
+version = "0.1.0.dev5"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },

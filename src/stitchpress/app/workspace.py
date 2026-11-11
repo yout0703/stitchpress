@@ -66,7 +66,7 @@ def build_workspace(w, canvas_type):
     layout.setSpacing(0)
     w.setCentralWidget(root)
 
-    header, hl = frame("documentHeader", horizontal=True, margins=(20, 12, 20, 12))
+    header, hl = frame("documentHeader", horizontal=True, margins=(20, 8, 20, 8))
     hl.addWidget(label("StitchPress", "brand"))
     hl.addWidget(label("绣印工坊", "muted"))
     w.document_title = label("", "document")

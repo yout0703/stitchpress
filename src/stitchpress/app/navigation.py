@@ -78,8 +78,10 @@ def build_menus(w):
     files.addAction("恢复保存历史…", w.restore_version)
     files.addAction("新建示例", w.new_demo)
     view = bar.addMenu("查看")
-    for index, title, _, _ in ROUTES:
-        view.addAction(title, lambda checked=False, i=index: w.show_page(i))
+    for number, (index, title, _, _) in enumerate(ROUTES, 1):
+        item = view.addAction(title, lambda checked=False, i=index: w.show_page(i))
+        item.setShortcut(QKeySequence(f"Ctrl+{number}"))
+        w.addAction(item)
     view.addSeparator()
     view.addAction("切换白天 / 夜间", w.toggle_theme)
     view.addAction("本地任务记录…", w.post_task_history)
@@ -142,11 +144,11 @@ def install_navigation(w):
     horizontal.setSpacing(0)
     rail = QFrame()
     rail.setObjectName("navigationRail")
-    rail.setFixedWidth(208)
+    rail.setFixedWidth(196)
     layout = QVBoxLayout(rail)
-    layout.setContentsMargins(12, 24, 12, 16)
+    layout.setContentsMargins(12, 22, 12, 16)
     layout.setSpacing(8)
-    title = QLabel("当前作品")
+    title = QLabel("制作工作台")
     title.setProperty("role", "muted")
     layout.addWidget(title)
     w.reference_nav = []

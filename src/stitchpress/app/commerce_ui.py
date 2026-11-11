@@ -47,18 +47,22 @@ class CommerceDialog(QDialog):
         self.setWindowTitle("商品模板 · 三场景与7+5")
         self.resize(760, 650)
         layout = QVBoxLayout(self)
-        note = QLabel(
-            "内置场景是独立绘制的示意插画，可导入自己的背景。画作来自母版模拟，保持比例；超出场景时拒绝裁切。详情默认1200×1600，可自定义；方图800×800，与生产参数分开。"
-        )
+        note = QLabel("三张场景分别配置；可从图库挑选，也可导入自己的背景。")
         note.setWordWrap(True)
         layout.addWidget(note)
-        tabs = QTabWidget()
+        tabs = self.tabs = QTabWidget()
         layout.addWidget(tabs, 1)
         self.scenes = []
         for i, saved in enumerate(self.saved.scenes):
             spec = SceneSettings(**saved)
             page = QWidget()
-            form = QFormLayout(page)
+            columns = QHBoxLayout(page)
+            columns.setSpacing(28)
+            left, right = QWidget(), QWidget()
+            columns.addWidget(left, 1)
+            columns.addWidget(right, 1)
+            form = QFormLayout(left)
+            right_form = QFormLayout(right)
             scene, frame = QComboBox(), QComboBox()
             scene.addItems(SCENES)
             frame.addItems(FRAMES)
@@ -93,13 +97,18 @@ class CommerceDialog(QDialog):
                 ("卡纸RGB（逗号分隔）", matcolor),
                 ("背景", background),
             ]:
-                form.addRow(name, widget)
+                (right_form if widget in (border, mat, matcolor, background) else form).addRow(
+                    name, widget
+                )
             import_button = QPushButton("导入自选背景…")
             import_button.clicked.connect(lambda _, index=i: self.import_background(index))
             reset = QPushButton("恢复内置背景")
             reset.clicked.connect(lambda _, index=i: self.reset_background(index))
-            form.addRow(import_button)
-            form.addRow(reset)
+            actions = QHBoxLayout()
+            actions.addWidget(import_button)
+            actions.addWidget(reset)
+            actions.addStretch()
+            right_form.addRow(actions)
             tabs.addTab(page, f"场景 {i + 1}")
         style = QWidget()
         form = QFormLayout(style)
@@ -118,6 +127,8 @@ class CommerceDialog(QDialog):
             self.art_source.addItem(text, value)
         self.art_source.setCurrentIndex(self.art_source.findData(self.saved.art_source))
         form.addRow("场景画作来源", self.art_source)
+        sizing = QWidget()
+        sizing_form = QFormLayout(sizing)
         self.detail_fields = {}
         for key, title, minimum, maximum in (
             ("detail_width", "详情宽 px", 600, 4800),
@@ -128,7 +139,7 @@ class CommerceDialog(QDialog):
             field.setRange(minimum, maximum)
             field.setValue(getattr(self.saved, key))
             self.detail_fields[key] = field
-            form.addRow(title, field)
+            sizing_form.addRow(title, field)
         self.size, self.dpi = QSpinBox(), QSpinBox()
         self.size.setRange(20, 80)
         self.size.setValue(self.saved.font_pixels)
@@ -147,7 +158,7 @@ class CommerceDialog(QDialog):
         ]:
             form.addRow(name, self.text_fields[key])
         form.addRow("标题设计像素", self.size)
-        form.addRow("方图DPI（像素不变）", self.dpi)
+        sizing_form.addRow("方图 DPI · 800×800 px", self.dpi)
         for name, key in [("底色RGB", "background"), ("文字RGB", "ink"), ("点缀RGB", "accent")]:
             form.addRow(name, self.colors[key])
         form.addRow("注意事项（自行核对材料依据）", self.care)
@@ -157,7 +168,8 @@ class CommerceDialog(QDialog):
         )
         help_label.setWordWrap(True)
         form.addRow(help_label)
-        tabs.addTab(style, "文字与局部")
+        tabs.addTab(style, "内容与样式")
+        tabs.addTab(sizing, "输出尺寸")
         square = QWidget()
         form = QFormLayout(square)
         self.squares = []

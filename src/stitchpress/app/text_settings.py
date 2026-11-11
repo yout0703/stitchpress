@@ -34,12 +34,11 @@ class TextSettingsDialog(QDialog):
         self.resize(760, 550)
         self.owner = owner
         layout = QVBoxLayout(self)
-        note = QLabel(
-            "留空沿用基础版。固定保留区内排字，越界或缺字会阻止输出，不会缩字号或盖住针格。字号为pt，偏移为mm。输出字体在尺寸/查图设置中导入。"
-        )
+        note = QLabel("分别设置各区域的文字。模板留空沿用基础文字；越界或缺字会在输出前提示。")
         note.setWordWrap(True)
         layout.addWidget(note)
         tabs = QTabWidget()
+        tabs.setObjectName("textSlots")
         layout.addWidget(tabs)
         self.controls = {}
         self.assets = {}
@@ -59,13 +58,19 @@ class TextSettingsDialog(QDialog):
             self.extra_controls[key] = dict(enabled=enabled, asset=saved.font_asset, label=font)
             form.addRow(enabled)
             form.addRow(font)
-            form.addRow(choose, reset)
+            font_actions = QHBoxLayout()
+            font_actions.addWidget(choose)
+            font_actions.addWidget(reset)
+            font_actions.addStretch()
+            form.addRow(font_actions)
             fields = {
                 k: QLineEdit(getattr(saved, k)) for k in ("template", "points", "dx_mm", "dy_mm")
             }
             fields["template"].setPlaceholderText(
                 "{code} · {width} x {height} · {stitches} stitches"
             )
+            for field_key in ("points", "dx_mm", "dy_mm"):
+                fields[field_key].setMaximumWidth(150)
             align = QComboBox()
             for label, value in [("左对齐", "left"), ("居中", "center"), ("右对齐", "right")]:
                 align.addItem(label, value)
@@ -77,6 +82,7 @@ class TextSettingsDialog(QDialog):
                 box.setRange(0, 255)
                 box.setValue(value)
                 color_row.addWidget(QLabel(label))
+                box.setMaximumWidth(85)
                 color_row.addWidget(box)
                 colors.append(box)
             for label, widget in [
@@ -87,6 +93,7 @@ class TextSettingsDialog(QDialog):
                 ("上下偏移 mm", fields["dy_mm"]),
             ]:
                 form.addRow(label, widget)
+            color_row.addStretch()
             form.addRow("印刷通道 0–255", color_row)
             preview = QLabel()
             preview.setWordWrap(True)
@@ -96,6 +103,7 @@ class TextSettingsDialog(QDialog):
             tabs.addTab(page, title)
         label = QLabel("支持占位符：" + "  ".join("{" + key + "}" for key in sorted(FIELDS)))
         label.setWordWrap(True)
+        label.setProperty("role", "muted")
         layout.addWidget(label)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel

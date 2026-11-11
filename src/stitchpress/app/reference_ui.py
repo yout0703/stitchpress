@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -82,13 +84,17 @@ PAGE_NAMES = tuple(route[1] for route in ROUTES)
 
 def page_heading(layout, title, description):
     layout.setContentsMargins(28, 24, 28, 24)
-    layout.setSpacing(16)
+    layout.setSpacing(12)
+    heading = QVBoxLayout()
+    heading.setSpacing(5)
     label = text(title)
     label.setProperty("role", "pageTitle")
-    layout.addWidget(label)
+    heading.addWidget(label)
     label = text(description)
     label.setProperty("role", "muted")
-    layout.addWidget(label)
+    heading.addWidget(label)
+    layout.addLayout(heading)
+    layout.addSpacing(10)
 
 
 def text(value):
@@ -126,6 +132,11 @@ class EditorPanel(QWidget):
         self.form_scroll = QScrollArea()
         self.form_scroll.setWidgetResizable(True)
         self.layout_.addWidget(self.form_scroll, 1)
+        self.form_notice = text("所有更改已应用")
+        self.form_notice.setProperty("role", "muted")
+        self.footer = QHBoxLayout()
+        self.footer.addWidget(self.form_notice, 1)
+        self.layout_.addLayout(self.footer)
         self.buttons = None
         self.editor = None
         self.model_sha = None
@@ -157,9 +168,14 @@ class EditorPanel(QWidget):
             return True
 
     def reload(self):
+        tab_indices = (
+            [tab.currentIndex() for tab in self.editor.findChildren(QTabWidget)]
+            if self.editor
+            else []
+        )
         if self.editor:
             self.form_scroll.takeWidget().deleteLater()
-            self.layout_.removeWidget(self.buttons)
+            self.footer.removeWidget(self.buttons)
             self.buttons.deleteLater()
         ctor = {
             "spec": SpecificationDialog,
@@ -168,6 +184,23 @@ class EditorPanel(QWidget):
         }[self.kind]
         self.editor = ctor(self.owner)
         self.editor.setWindowFlags(Qt.WindowType.Widget)
+        self.editor.setObjectName("editorSurface")
+        for tabs in self.editor.findChildren(QTabWidget):
+            tabs.tabBar().setExpanding(False)
+        for form in self.editor.findChildren(QFormLayout):
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+            form.setVerticalSpacing(8)
+            form.setHorizontalSpacing(22)
+        for field in self.editor.findChildren(QLineEdit):
+            field.setMaximumWidth(520)
+        for field in self.editor.findChildren(QComboBox):
+            field.setMaximumWidth(360)
+        for field in self.editor.findChildren(QSpinBox):
+            field.setMinimumWidth(110)
+            field.setMaximumWidth(150)
+        for button in self.editor.findChildren(QPushButton):
+            button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            button.clicked.connect(self.owner.mark_reference_pending)
         if self.kind == "spec":
             self.editor.tabs.tabBar().hide()  # One shared page-level navigation.
 
@@ -175,14 +208,15 @@ class EditorPanel(QWidget):
         buttons = self.editor.findChildren(QDialogButtonBox)[-1]
         buttons.accepted.disconnect()
         buttons.rejected.disconnect()
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("应用到草稿")
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("应用更改")
+        buttons.button(QDialogButtonBox.StandardButton.Save).setProperty("role", "primary")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("恢复本页")
         buttons.accepted.connect(self.apply)
         buttons.rejected.connect(self.reload)
         self.editor.layout().removeWidget(buttons)
         self.buttons = buttons
         self.form_scroll.setWidget(self.editor)
-        self.layout_.addWidget(buttons)
+        self.footer.addWidget(buttons)
         self.project_id = self.owner.draft.project_id
         self.start_values = copy.deepcopy(self.value())
         self.model_sha = self.model()
@@ -200,10 +234,20 @@ class EditorPanel(QWidget):
             )
             if signal is not None:
                 signal.connect(self.owner.mark_reference_pending)
+        for tabs, index in zip(self.editor.findChildren(QTabWidget), tab_indices, strict=False):
+            tabs.setCurrentIndex(index)
         self.editor.show()
         if self.kind == "spec" and hasattr(self.owner, "print_stack"):
             self.owner.select_print_section(self.owner.print_tabs.currentIndex())
         self.owner.update_pending_navigation()
+
+    def update_state(self):
+        pending = self.pending()
+        self.buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(pending)
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(pending)
+        self.form_notice.setText(
+            "有未应用的更改" if pending else "所有更改已应用 · 保存作品可在下次继续"
+        )
 
     def sync(self):
         if self.project_id != self.owner.draft.project_id or (
@@ -212,6 +256,8 @@ class EditorPanel(QWidget):
             self.reload()
 
     def apply(self):
+        if not self.pending():
+            return
         try:
             value = self.value()  # Validate every field before mutating the draft.
             if self.model_sha != self.model():
@@ -277,7 +323,7 @@ class ReferenceFeatures:
         if not hasattr(self, "_post_baseline"):
             return
         if hasattr(self, "preview_state"):
-            self.preview_state.setText("有尚未应用的参数；请先应用，再刷新预览。")
+            self.invalidate_post_preview("有尚未应用的参数；请先应用，再刷新预览。")
         self.update_pending_navigation()
 
     def update_pending_navigation(self):
@@ -285,6 +331,7 @@ class ReferenceFeatures:
             return
         pending = set()
         for panel in self.reference_panels:
+            panel.update_state()
             if panel.pending():
                 pending.add({"spec": 4, "text": 4, "commerce": 8}[panel.kind])
         try:
@@ -309,7 +356,14 @@ class ReferenceFeatures:
         page = QWidget()
         layout = QVBoxLayout(page)
         page_heading(layout, "作品", "从已有图纸开始，确认作品信息与对应原图。")
+        body = QHBoxLayout()
+        body.setSpacing(24)
+        details = QWidget()
+        dl = QVBoxLayout(details)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.setSpacing(18)
         form = QFormLayout()
+        form.setVerticalSpacing(14)
         self.ref_title, self.ref_code = QLineEdit(), QLineEdit()
         for field, old in ((self.ref_title, self.title_edit), (self.ref_code, self.code_edit)):
             field.setMaximumWidth(660)
@@ -317,13 +371,14 @@ class ReferenceFeatures:
             field.editingFinished.connect(self.apply_fields)
         form.addRow("作品名称", self.ref_title)
         form.addRow("客户货号", self.ref_code)
-        layout.addLayout(form)
+        dl.addLayout(form)
         source = QGroupBox("输入文件")
-        source.setMaximumWidth(900)
+        source.setMaximumWidth(780)
         sl = QVBoxLayout(source)
+        import_action = action("导入 XSD…", self.import_reference_pattern)
         row(
             sl,
-            action("导入 XSD…", self.import_reference_pattern),
+            import_action,
             action("选择对应原图…", self.choose_image),
             menu_button(
                 "更多",
@@ -333,6 +388,7 @@ class ReferenceFeatures:
                 ),
             ),
         )
+        import_action.setProperty("role", "primary")
         self.ref_input_report = text("尚未导入图纸")
         sl.addWidget(self.ref_input_report)
         self.source_confirm = QCheckBox("已核对：对应原图与 XSD 为同一作品")
@@ -340,14 +396,36 @@ class ReferenceFeatures:
         sl.addWidget(self.source_confirm)
         self.ref_source_details = text("")
         sl.addWidget(disclosure("查看来源详情", self.ref_source_details))
-        layout.addWidget(source)
+        dl.addWidget(source)
         note = text("返单可从「文件」打开作品或作品设置。输出目录在「检查与导出」设置。")
         note.setProperty("role", "muted")
-        layout.addWidget(note)
+        dl.addWidget(note)
         next_button = action("设置印花与图纸", lambda: self.show_page(4))
         next_button.setProperty("role", "primary")
-        row(layout, next_button)
-        layout.addStretch()
+        next_button.setText("继续设置图纸")
+        next_button.setProperty("role", "quiet")
+        row(dl, next_button)
+        dl.addStretch()
+        from .desktop import Canvas
+
+        preview = QFrame()
+        preview.setObjectName("overviewCard")
+        pv = QVBoxLayout(preview)
+        pv.setContentsMargins(20, 20, 20, 20)
+        title = text("作品概览")
+        title.setProperty("role", "heading")
+        pv.addWidget(title)
+        self.work_overview = Canvas()
+        self.work_overview.setMinimumSize(280, 340)
+        self.work_overview.setDragMode(Canvas.DragMode.ScrollHandDrag)
+        pv.addWidget(self.work_overview, 1)
+        caption = text("当前针格母版 · 导出尺寸与符号请在检查页核对")
+        caption.setProperty("role", "muted")
+        pv.addWidget(caption)
+        body.addWidget(details, 3)
+        body.addWidget(preview, 2)
+        layout.addLayout(body, 1)
+
         return page
 
     def spec_page(self):
@@ -355,6 +433,7 @@ class ReferenceFeatures:
         layout = QVBoxLayout(page)
         page_heading(layout, "印花与图纸", "调整实际尺寸、阅读图纸和标题页脚。")
         self.print_tabs = QTabBar()
+        self.print_tabs.setExpanding(False)
         for title in ("尺寸与布料", "阅读图纸", "标题与页脚", "预设"):
             self.print_tabs.addTab(title)
         self.spec_panel = EditorPanel(self, "spec")
@@ -506,7 +585,15 @@ class ReferenceFeatures:
         )
         self.post_preview_canvas = Canvas()
         self.post_preview_canvas.setMinimumHeight(210)
-        pl.addWidget(self.post_preview_canvas, 1)
+        self.post_preview_stack = QStackedWidget()
+        self.post_preview_empty = QLabel(
+            "选择一个输出目标，点击“刷新预览”\n这里会显示实际文件的渲染结果"
+        )
+        self.post_preview_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.post_preview_empty.setProperty("role", "emptyState")
+        self.post_preview_stack.addWidget(self.post_preview_empty)
+        self.post_preview_stack.addWidget(self.post_preview_canvas)
+        pl.addWidget(self.post_preview_stack, 1)
         self.preview_state = text("选择目标并刷新预览。更改参数后需要重新生成。")
         pl.addWidget(self.preview_state)
         self.post_actual = action("100% 像素", self.post_preview_canvas.actual_pixels)
@@ -555,7 +642,8 @@ class ReferenceFeatures:
         ):
             form.addRow(name, widget)
         ol.addWidget(disclosure("高级输出设置", advanced))
-        ol.addWidget(action("应用输出设置", self.apply_post_options))
+        apply_output = action("应用输出设置", self.apply_post_options)
+        row(ol, apply_output)
         ol.addWidget(text("每次生成独立目录。正式输出需客户符号库、CMYK ICC 与本次核对。"))
         ol.addStretch()
         options_scroll = QScrollArea()
@@ -591,12 +679,17 @@ class ReferenceFeatures:
         self.post_preview_number.valueChanged.connect(self.preview_target_changed)
         return page
 
+    def invalidate_post_preview(self, message):
+        self.preview_state.setText(message)
+        self.post_preview_empty.setText(message + "\n预览完成后会显示在这里")
+        self.post_preview_stack.setCurrentIndex(0)
+
     def preview_target_changed(self, *args):
         paged = self.post_preview_target.currentData() in {"pages", "symbols", "card"}
         self.post_preview_number.setEnabled(paged)
         if not paged:
             self.post_preview_number.setValue(1)
-        self.preview_state.setText("预览目标已改变；请刷新以查看所选文件。")
+        self.invalidate_post_preview("目标已切换 · 刷新预览查看当前文件")
 
     def commerce_page(self):
         page = QWidget()
@@ -615,12 +708,15 @@ class ReferenceFeatures:
 
     def open_commerce_preview(self):
         self.post_preview_target.setCurrentIndex(
-            self.post_preview_target.findData("detail-scene-1")
+            self.post_preview_target.findData(
+                f"detail-scene-{min(self.commerce_panel.editor.tabs.currentIndex(), 2) + 1}"
+            )
         )
         if self.post_preview_target.currentIndex() < 0:
             self.post_preview_target.setCurrentIndex(6)
         self.post_tabs.setCurrentIndex(0)
         self.show_page(7)
+        self.preview_reference_output()
 
     def reference_pending(self):
         if any(panel.pending() for panel in getattr(self, "reference_panels", ())):
@@ -657,6 +753,9 @@ class ReferenceFeatures:
     def refresh_reference_pages(self):
         if not hasattr(self, "reference_nav"):
             return
+        if getattr(self, "_overview_sha", None) != self.design.content_sha:
+            self.work_overview.set_design(self.design, fit=True)
+            self._overview_sha = self.design.content_sha
         metadata = self.draft.entities["metadata"]
         for field, key in ((self.ref_title, "title"), (self.ref_code, "code")):
             if not field.hasFocus():
@@ -700,7 +799,7 @@ class ReferenceFeatures:
         if getattr(self, "_post_plan_sha", None) != current:
             self.post_summary.setText("当前参数尚未检查；请检查尺寸与文件。")
         if getattr(self, "_reference_preview_sha", None) != current:
-            self.preview_state.setText("预览待刷新 / 参数已改变；请查看当前真实目标")
+            self.invalidate_post_preview("当前设置尚未预览 · 点击刷新预览")
 
     def _post_or_threads_pending(self):
         if not hasattr(self, "_post_baseline"):
@@ -1173,6 +1272,7 @@ class ReferenceFeatures:
                         include_image=False,
                     ),
                 )
+                self.invalidate_post_preview("正在生成实际预览 · 可在底部取消")
         except Exception as exc:
             self.error(exc)
 
@@ -1180,11 +1280,14 @@ class ReferenceFeatures:
         from PIL import Image
 
         checks = result["checks"]
+        if self.reference_pending():
+            self.invalidate_post_preview("有未应用的更改 · 应用后重新预览")
+            return
         if (
             checks.get("target") != self.post_preview_target.currentData()
             or checks.get("page", 1) != self.post_preview_number.value()
         ):
-            self.preview_state.setText("旧目标预览已完成；当前目标不同，请刷新当前目标。")
+            self.invalidate_post_preview("当前目标已改变 · 请刷新当前目标")
             return
         size = " × ".join(str(v) for v in checks.get("preview_size", ()))
         title = TARGET_NAMES.get(checks.get("target"), "商品图片")
@@ -1194,6 +1297,7 @@ class ReferenceFeatures:
         note = "完整缩略概览 · 非生产原像素 · " if checks.get("overview") else ""
         self.preview_state.setText(f"{note}{title} · {size} px · 第 {checks.get('page', 1)} 页")
         self.post_actual.setText("100% 概览像素" if checks.get("overview") else "100% 原像素")
+        self.post_preview_stack.setCurrentIndex(1)
         self.post_tabs.setCurrentIndex(0)
 
     def review_reference_output(self):

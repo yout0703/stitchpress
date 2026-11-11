@@ -1303,6 +1303,8 @@ class Workbench(
                 self.job["folder"],
                 "remote_unknown" if self.job["operation"] == "analyze" else "failed",
             )
+        if self.job and self.job["operation"] == "post-preview":
+            self.invalidate_post_preview("预览未启动 · 可刷新重试，详情见任务记录")
         self.log.append(f"后台任务未启动或异常退出：{self.process.errorString()}")
         self.cancel_button.setEnabled(False)
         self.statusBar().showMessage("后台任务失败；原母版和已有完整交付未改变")
@@ -1517,6 +1519,8 @@ class Workbench(
             self.update_document_state()
             self.statusBar().showMessage("任务完成；候选/分析已保留，生产资格仍取决于母版审核")
         except Exception as exc:
+            if job["operation"] == "post-preview":
+                self.invalidate_post_preview("预览未完成 · 可刷新重试，详情见任务记录")
             self.error(exc)
 
     def export(self, targets=None):

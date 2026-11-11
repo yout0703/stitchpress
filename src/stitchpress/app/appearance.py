@@ -81,9 +81,15 @@ def apply_appearance(app: QApplication, root, theme):
         QFrame#selectionDock, QFrame#inspector, QFrame#pageCard { background: $panel; }
         QFrame#navigationRail { background: $panel; border-right: 1px solid $line; }
         QPushButton[role="navigation"] { text-align: left; border: none;
-            padding: 12px 10px; min-height: 24px; }
+            padding: 9px 12px; min-height: 22px; }
         QPushButton[role="navigation"]:checked { background: $selected; color: $accent; }
         QListWidget { background: $raised; border: 1px solid $line; border-radius: 6px; }
+        QFrame#overviewCard { background: $panel; border: 1px solid $line; border-radius: 14px; }
+        QWidget#editorSurface, QWidget#editorSurface QStackedWidget { background: $panel; }
+        QLabel[role="emptyState"] { background: $canvas; color: $muted; font-size: 15px;
+            border-radius: 10px; }
+        QLabel[role="sectionLabel"] { color: $muted; font-size: 12px; font-weight: 600;
+            padding-top: 8px; padding-bottom: 5px; }
         QFrame#documentHeader { border-bottom: 1px solid $line; }
         QFrame#viewToolbar { border-bottom: 1px solid $line; }
         QFrame#palettePanel { border-right: 1px solid $line; }
@@ -95,7 +101,7 @@ def apply_appearance(app: QApplication, root, theme):
         QLabel[role="brand"] { font-size: 19px; font-weight: 650; }
         QLabel[role="document"] { font-size: 15px; font-weight: 600; }
         QLabel[role="heading"] { font-size: 19px; font-weight: 600; }
-        QLabel[role="pageTitle"] { font-size: 25px; font-weight: 650; }
+        QLabel[role="pageTitle"] { font-size: 24px; font-weight: 650; }
         QLabel[role="muted"] { color: $muted; }
         QLabel[role="badge"] { color: $accent; background: $selected;
             border-radius: 5px; padding: 5px 9px; font-size: 12px; }
@@ -143,7 +149,9 @@ def apply_appearance(app: QApplication, root, theme):
         QTableCornerButton::section { background: $panel; border: none; }
         QGraphicsView { background: $canvas; border: none; }
         QScrollArea { background: transparent; border: none; }
-        QScrollArea > QWidget > QWidget { background: $panel; }
+        QScrollArea > QWidget > QWidget { background: $bg; }
+        QScrollArea > QWidget > QWidget#editorSurface,
+        QWidget#editorSurface QStackedWidget { background: $panel; }
         QScrollBar:vertical { background: transparent; width: 9px; margin: 0; }
         QScrollBar:horizontal { background: transparent; height: 9px; margin: 0; }
         QScrollBar::handle { background: $disabled; border-radius: 4px; min-height: 28px;
@@ -154,14 +162,19 @@ def apply_appearance(app: QApplication, root, theme):
         QGroupBox { border: 1px solid $line; border-radius: 6px;
             margin-top: 18px; padding: 14px 10px 10px; font-weight: 600; }
         QGroupBox::title { subcontrol-origin: margin; left: 12px; }
+        QMenuBar::item:selected { background: $selected; }
+        QMenuBar::item { padding: 4px 10px; }
         QMenu, QMenuBar { background: $panel; color: $text;
             border: 1px solid $line; padding: 5px; }
         QMenu::item { padding: 9px 20px; border-radius: 4px; }
         QMenu::item:selected { background: $selected; color: $accent; }
         QToolButton::menu-indicator { width: 7px; }
-        QTabWidget::pane { border: 1px solid $line; background: $panel; }
-        QTabBar::tab { background: $raised; color: $muted; padding: 10px 16px; }
-        QTabBar::tab:selected { background: $selected; color: $accent; }
+        QTabWidget::pane { border: none; background: $panel; top: 8px; }
+        QTabBar::tab { background: transparent; color: $muted; padding: 10px 16px;
+            border-bottom: 2px solid transparent; }
+        QTabBar::tab:selected { color: $accent; border-bottom: 2px solid $accent;
+            font-weight: 600; }
+        QTabBar::tab:hover { background: $hover; }
         QStatusBar { background: $bg; color: $muted; font-size: 11px; }
         QStatusBar::item { border: none; }
         QToolTip { background: $raised; color: $text; border: 1px solid $line;

@@ -130,7 +130,12 @@ class SpecificationDialog(QDialog):
         form.addRow(note)
         tabs.addTab(fabric_page, "尺寸与布料")
         reference_page = QWidget()
-        form = QFormLayout(reference_page)
+        columns = QHBoxLayout(reference_page)
+        columns.setSpacing(28)
+        left_column, right_column = QWidget(), QWidget()
+        columns.addWidget(left_column, 1)
+        columns.addWidget(right_column, 1)
+        form = QFormLayout(left_column)
         self.paper = QComboBox()
         self.paper.addItems(["A4", "A3", "A2", "custom", "whole"])
         self.paper.setItemText(3, "自定义")
@@ -154,34 +159,54 @@ class SpecificationDialog(QDialog):
         self.reading_cell = QLineEdit()
         self.reading_cell.setPlaceholderText("留空沿用格距 × 阅读倍率")
         self.reading_margins = [QLineEdit() for _ in range(4)]
-        form.addRow("查图独立DPI（72–1200）", self.reading_dpi)
-        form.addRow("查图每格毫米（0.5–10）", self.reading_cell)
-        for name, field in zip(("左", "上", "右", "下"), self.reading_margins, strict=True):
-            field.setPlaceholderText("留空沿用基础页边距")
-            form.addRow(name + "页边距 mm（5–50）", field)
+
+        def section(title):
+            heading = QLabel(title)
+            heading.setProperty("role", "sectionLabel")
+            form.addRow(heading)
+
+        def pair(items):
+            line = QHBoxLayout()
+            line.setSpacing(10)
+            for title, field in items:
+                line.addWidget(QLabel(title))
+                field.setMaximumWidth(100)
+                field.setAccessibleName(title)
+                line.addWidget(field)
+            line.addStretch()
+            return line
+
+        section("页面与方向")
+        form.addRow("纸张", self.paper)
+        form.addRow("方向", self.landscape)
+        form.addRow("自定义尺寸 cm", pair((("宽", self.custom_w), ("高", self.custom_h))))
+        section("格宽与清晰度")
+        form.addRow("查图 DPI", self.reading_dpi)
+        form.addRow("每格 mm · 0.5–10", self.reading_cell)
+        form.addRow("阅读倍率 · 1–4", self.scale)
+        form.addRow("重叠格数", self.overlap)
+        form = QFormLayout(right_column)
+        section("页边距与样式")
+        for i in range(4):
+            self.reading_margins[i].setPlaceholderText("默认")
+            self.reading_margins[i].setToolTip("5–50 mm；留空沿用基础页边距")
+        form.addRow(
+            "页边距 mm", pair((("左", self.reading_margins[0]), ("右", self.reading_margins[2])))
+        )
+        form.addRow("", pair((("上", self.reading_margins[1]), ("下", self.reading_margins[3]))))
+        form.addRow("查图样式", self.style)
         self.minor_grid = QCheckBox("显示逐格细线（十格线始终显示）")
-        for text, item in (
-            ("纸张", self.paper),
-            ("自定义宽 cm", self.custom_w),
-            ("自定义高 cm", self.custom_h),
-            ("方向", self.landscape),
-            ("阅读倍率 1–4", self.scale),
-            ("重叠格数", self.overlap),
-            ("查图样式", self.style),
-            ("网格", self.minor_grid),
-        ):
-            form.addRow(text, item)
-        font_button = QPushButton("导入当前作品的输出字体…")
+        form.addRow("网格", self.minor_grid)
+        section("输出字体")
+        font_button = QPushButton("导入字体…")
         font_button.clicked.connect(self.choose_font)
-        self.font_label = QLabel("默认 Noto Sans；中文标题需要自行导入包含字形的字体")
+        self.font_label = QLabel("默认 Noto Sans · 中文标题需要导入含中文字形的字体")
         self.font_label.setWordWrap(True)
         form.addRow(font_button)
         form.addRow(self.font_label)
-        note = QLabel(
-            "以上只改变查图。生产图仍按实际格距绘制。"
-            "厂家兼容版为 A4、1:1、无重叠、黑白符号；其他组合标为自定义查图。"
-        )
+        note = QLabel("以上设置只影响阅读图纸，生产图仍使用实际格距和生产 DPI。")
         note.setWordWrap(True)
+        note.setProperty("role", "muted")
         form.addRow(note)
         tabs.addTab(reference_page, "查图与字体")
         showcase_page = QWidget()
