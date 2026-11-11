@@ -1,7 +1,6 @@
 """Native workspace composition, kept separate from the project coordinator."""
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -76,98 +75,16 @@ def build_workspace(w, canvas_type):
     w.document_state = label("示例 · 未保存", "badge")
     hl.addWidget(w.document_state)
 
-    file_button = QToolButton()
-    file_button.setText("母版")
-    file_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    file_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-    bind_icon(file_button, "mdi6.file-document-outline")
-    file_menu = QMenu(file_button)
-    for text, callback, shortcut in (
-        ("新建示例", w.new_demo, QKeySequence.StandardKey.New),
-        ("打开作品…", w.open_project, QKeySequence.StandardKey.Open),
-        ("保存", w.save, QKeySequence.StandardKey.Save),
-        ("另存为…", w.save_as, QKeySequence.StandardKey.SaveAs),
-        ("导入 XSD / OXS / JSON…", w.import_design, None),
-        ("导入客户资源…", w.import_resources, None),
-    ):
-        action = QAction(text, w)
-        if shortcut:
-            action.setShortcut(shortcut)
-        action.triggered.connect(callback)
-        file_menu.addAction(action)
-        w.addAction(action)
-    file_menu.addSeparator()
-    for title, actions in (
-        (
-            "制版与查图",
-            (
-                ("尺寸、查图与预设…", w.specification_settings),
-                ("顶底栏文字与占位符…", w.edit_text_layers),
-                ("查图分页与原像素预览…", w.plan_preview),
-                ("母版数字检查…", w.inspect_master),
-                ("导出全针 OXS…", w.export_oxs_file),
-            ),
-        ),
-        (
-            "符号与资源",
-            (
-                ("符号库管理…", w.manage_symbols),
-                ("重新自动分配符号…", w.reassign_symbols),
-                ("导出符号速查卡…", w.export_symbol_card),
-                ("配线规则与多CT…", w.material_settings),
-                ("导入源图输入 ICC…", w.import_input_icc),
-                ("清除源图输入 ICC 覆盖", w.clear_input_icc),
-                ("清除当前蒙版标注", w.clear_annotations),
-            ),
-        ),
-        (
-            "版本与恢复",
-            (
-                ("恢复未保存草稿…", w.recover_draft),
-                ("恢复保存历史…", w.restore_version),
-                ("针格候选与修订比较…", w.candidate_browser),
-                ("制版流程与检查点…", w.workflow_board),
-                ("导入蓝图候选…", w.import_blueprint_candidate),
-                ("蓝图版本与比较…", w.blueprint_browser),
-                ("同画幅局部图像合成…", w.local_image_candidate),
-            ),
-        ),
-        (
-            "批量与交付",
-            (
-                ("批量导出已保存作品…", w.batch_export),
-                ("按需导出补件…", w.export_selected),
-                ("商品模板设置…", w.edit_commerce),
-                ("商品素材预览…", w.preview_commerce),
-                ("导出商品7+5或单项…", w.export_commerce_files),
-                ("恢复本机导出批次…", w.resume_batch),
-                ("登记交付/试印/洗水验收…", w.delivery_review),
-                ("压缩已核验交付为 ZIP…", w.zip_delivery),
-            ),
-        ),
-    ):
-        menu = file_menu.addMenu(title)
-        for text, callback in actions:
-            menu.addAction(text, callback)
-    file_menu.addSeparator()
-    file_menu.addAction("AI 服务配置…", w.ai_settings)
-    file_menu.addAction("本地反馈与附件…", w.feedback_local)
-    file_menu.addAction("使用帮助与当前范围…", w.help_local)
-    file_button.setMenu(file_menu)
-    hl.addWidget(file_button)
-    w.export_nav = button(
-        w, "专用交付", lambda: w.show_page(2), "mdi6.tray-arrow-up", checkable=True
-    )
-    file_menu.addAction("扩展 · 专用交付", lambda: w.show_page(2))
+    from .navigation import build_menus
+
+    build_menus(w)
+    w.export_nav = button(w, "专用交付", lambda: w.show_page(2), checkable=True)
+    w.ai_nav = button(w, "AI 助手", lambda: w.show_page(1), checkable=True)
     w.export_nav.hide()
-    w.ai_nav = button(w, "AI 助手", lambda: w.show_page(1), "mdi6.creation", checkable=True)
-    file_menu.addAction("扩展 · AI 助手", lambda: w.show_page(1))
     w.ai_nav.hide()
-    w.theme_button = button(w, "白天", w.toggle_theme, "mdi6.white-balance-sunny")
-    w.theme_button.setToolTip("切换白天 / 夜间主题；只影响界面，记住本机选择")
-    hl.addWidget(w.theme_button)
-    hl.addWidget(button(w, "保存", w.save, "mdi6.content-save-outline"))
-    hl.addWidget(button(w, "预览与出图", lambda: w.show_page(7), role="primary"))
+    w.theme_button = button(w, "白天", w.toggle_theme, "mdi6.white-balance-sunny", "quiet")
+    w.theme_button.setToolTip("切换白天 / 夜间主题；只影响界面")
+    hl.addWidget(button(w, "保存", w.save, "mdi6.content-save-outline", "quiet"))
     layout.addWidget(header)
 
     toolbar, tl = frame("viewToolbar", horizontal=True, margins=(20, 8, 20, 8), spacing=8)
@@ -225,6 +142,7 @@ def build_workspace(w, canvas_type):
     )
     vc.addWidget(w.inspector_button)
     tl.addWidget(w.view_controls)
+    w.view_toolbar = toolbar
     layout.addWidget(toolbar)
 
     w.pages = QStackedWidget()

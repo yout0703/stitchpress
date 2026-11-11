@@ -59,10 +59,13 @@ class SymbolLibrary:
     symbols: tuple[Symbol, ...]
     icc: bytes | None
     usage: str
+    name: str = "未命名符号库"
 
     def __post_init__(self):
         if not isinstance(self.revision, str) or not self.revision or len(self.symbols) > 512:
             raise ResourceError("符号库修订无效或超过512个资源上限")
+        if not isinstance(self.name, str) or not self.name.strip() or len(self.name) > 100:
+            raise ResourceError("符号库名称须为1–100字符")
         if self.icc:
             try:
                 profile = ImageCms.ImageCmsProfile(io.BytesIO(self.icc))
@@ -288,6 +291,15 @@ def revise_library(
     used=frozenset(),
 ):
     symbols = list(library.symbols)
+    if operation == "rename-library":
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            raise ResourceError("符号库名称须为1–100字符")
+        name = name.strip()
+        if name == library.name:
+            return library
+        return replace(
+            library, name=name, revision=digest({"parent": library.revision, "name": name})
+        )
     if operation == "add":
         new = parse_symbol(data, external_id, name)
         if new.key in library.by_key:
@@ -321,7 +333,7 @@ def revise_library(
             "icc": sha256(library.icc) if library.icc else None,
         }
     )
-    return SymbolLibrary(revision, tuple(symbols), library.icc, library.usage)
+    return SymbolLibrary(revision, tuple(symbols), library.icc, library.usage, library.name)
 
 
 def library_assets(library: SymbolLibrary) -> tuple[dict, dict[str, bytes]]:
@@ -337,6 +349,7 @@ def library_assets(library: SymbolLibrary) -> tuple[dict, dict[str, bytes]]:
         assets[icc_path] = library.icc
     return {
         "revision": library.revision,
+        "name": library.name,
         "usage": library.usage,
         "icc_asset": icc_path,
         "entries": entries,
@@ -352,4 +365,5 @@ def library_from_assets(record: dict, assets: dict[str, bytes]) -> SymbolLibrary
         ),
         assets[record["icc_asset"]] if record["icc_asset"] else None,
         record["usage"],
+        record.get("name", "未命名符号库"),
     )

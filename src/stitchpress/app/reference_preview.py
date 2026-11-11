@@ -37,10 +37,10 @@ def preview_reference(project, target, output, number=1):
     elif target == "production":
         w, h = renderer.layout.canvas_px
         if w * h > MAX_RENDER_PIXELS:
-            # A true first band, explicitly identified, not a downscaled stand-in.
-            surface, _ = renderer.production(band=(0, min(h, 512)))
-            image = surface.image
-            checks.update(partial=True, band=(0, min(h, 512)), full_size=(w, h))
+            from stitchpress.core.streaming import production_overview
+
+            image, extra = production_overview(renderer)
+            checks.update(extra)
         else:
             image, raster = renderer.production()
             checks.update(renderer.verify_cells(image, raster))

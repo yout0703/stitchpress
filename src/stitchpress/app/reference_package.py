@@ -122,10 +122,10 @@ def preflight(project, options=None, *, demo=False):
         if reading_targets:
             raise
         reading, plan = renderer, None
-    if "pages" in options.targets and len(plan.pages) > 100:
-        raise StitchPressError("本地查图暂限100页，不能静默删页")
+    if "pages" in options.targets and len(plan.pages) > 200:
+        raise StitchPressError("本地查图暂限200页，不能静默删页")
     if reading_targets and plan.paper_px[0] * plan.paper_px[1] > MAX_RENDER_PIXELS:
-        raise StitchPressError("查图单页超过当前6000万像素上限")
+        raise StitchPressError("查图单页超过当前8000万像素上限")
     pixels = renderer.layout.canvas_px[0] * renderer.layout.canvas_px[1]
     if "production" in options.targets and pixels > MAX_STREAM_PIXELS:
         raise StitchPressError("生产超过当前2.5亿像素保护上限")

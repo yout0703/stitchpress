@@ -18,7 +18,7 @@ from .text import draw_layer, parse_layers, values_for
 WHITE = (0, 0, 0, 0)
 BLACK = (255, 255, 255, 255)
 RED = (0, 255, 255, 0)
-MAX_RENDER_PIXELS = 60_000_000  # Single-image guard; production export uses a separate band writer.
+MAX_RENDER_PIXELS = 80_000_000  # Single-image guard; production export uses a separate band writer.
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,7 @@ class Renderer:
 
     def canvas(self, size):
         if size[0] * size[1] > MAX_RENDER_PIXELS:
-            raise ResourceError("输出超过6000万像素单页限制；生产大图请使用分条导出，不能静默缩小")
+            raise ResourceError("输出超过8000万像素单页限制；生产大图请使用分条导出，不能静默缩小")
         return Image.new("CMYK", size, WHITE)
 
     def text(self, image, xy, text: str, size: int, anchor="lt"):
@@ -479,7 +479,7 @@ def stitch_preview(
     k = max(ceil(width / 3), ceil(height / 4))
     width, height = 3 * k, 4 * k
     if width * height > MAX_RENDER_PIXELS:
-        raise ResourceError("模拟超过6000万像素试验限制")
+        raise ResourceError("模拟超过8000万像素试验限制")
     im = Image.new("RGB", (width, height), "white")
     dx, dy = (width - design.width * cell) // 2, (height - design.height * cell) // 2
     tiles = []
@@ -490,7 +490,41 @@ def stitch_preview(
         if highlight is not None and i != highlight:
             rgb = tuple(round(v * 0.2 + 255 * 0.8) for v in rgb)
         if style == "dot":
-            draw.ellipse((1, 1, cell - 2, cell - 2), fill=rgb)
+            # Deterministic raised gem: one tile for each occupied grid cell.
+            # Shading remains visible for white stitches; empty cells stay white.
+            edge, end = 1, cell - 2
+            inset = max(1, cell // 4)
+            hi = tuple(round(v * 0.65 + 255 * 0.35) for v in rgb)
+            low = tuple(round(v * 0.64) for v in rgb)
+            mid = tuple(round(v * 0.9) for v in rgb)
+            draw.rectangle((edge, edge, end, end), fill=mid)
+            draw.polygon(
+                (
+                    (edge, edge),
+                    (end, edge),
+                    (end - inset, edge + inset),
+                    (edge + inset, edge + inset),
+                ),
+                fill=hi,
+            )
+            draw.polygon(
+                (
+                    (edge, edge),
+                    (edge + inset, edge + inset),
+                    (edge + inset, end - inset),
+                    (edge, end),
+                ),
+                fill=hi,
+            )
+            draw.polygon(
+                ((end, edge), (end, end), (end - inset, end - inset), (end - inset, edge + inset)),
+                fill=low,
+            )
+            draw.polygon(
+                ((edge, end), (edge + inset, end - inset), (end - inset, end - inset), (end, end)),
+                fill=low,
+            )
+            draw.rectangle((edge + inset, edge + inset, end - inset, end - inset), fill=rgb)
         else:
             shadow = tuple(max(0, round(v * 0.82)) for v in rgb)
             for points in ((1, 1, cell - 2, cell - 2), (1, cell - 2, cell - 2, 1)):

@@ -425,12 +425,17 @@ class Workbench(
         self.set_theme("light" if self.theme == "dark" else "dark")
 
     def show_page(self, index):
+        if index == 5 and hasattr(self, "print_tabs"):
+            index = 4
+            self.print_tabs.setCurrentIndex(2)
         self.pages.setCurrentIndex(index)
         self.workbench_nav.setChecked(index == 0)
         self.ai_nav.setChecked(index == 1)
         self.export_nav.setChecked(index == 2)
-        for number, nav in enumerate(getattr(self, "reference_nav", ()), 3):
-            nav.setChecked(index == number)
+        for nav in getattr(self, "reference_nav", ()):
+            nav.blockSignals(True)
+            nav.setChecked(index == nav.property("pageIndex"))
+            nav.blockSignals(False)
         self.view_controls.setVisible(index == 0)
 
     def set_canvas_tool(self, pan):
@@ -1319,7 +1324,8 @@ class Workbench(
                 )
                 done = sum(j["status"] == "completed" for j in state["jobs"])
                 self.statusBar().showMessage(
-                    f"批次 {state['status']} · 完成 {done}/{len(state['jobs'])}；可从母版菜单恢复"
+                    f"批次 {state['status']} · 完成 {done}/{len(state['jobs'])}；"
+                    "可从「扩展 → 专用交付工具」恢复"
                 )
                 return
             if job["operation"] == "export":

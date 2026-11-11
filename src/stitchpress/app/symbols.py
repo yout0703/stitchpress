@@ -143,6 +143,11 @@ class SymbolLibraryDialog(QDialog):
         self.setWindowTitle("符号库管理 · 保存为新修订")
         self.resize(800, 740)
         layout = QVBoxLayout(self)
+        names = QFormLayout()
+        self.library_name = QLineEdit(self.library.name)
+        self.library_name.setMaxLength(100)
+        names.addRow("符号库名称", self.library_name)
+        layout.addLayout(names)
         note = QLabel(
             "库ID保留原类型；使用中的符号先调整绑定再删除。支持TIF/PNG/BMP，"
             "按当前库ICC规范化并保留原件；透明背景合成到白底。无ICC的RGB按sRGB解释。"
@@ -176,10 +181,19 @@ class SymbolLibraryDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self.accept_library)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.refresh()
+
+    def accept_library(self):
+        try:
+            self.library = revise_library(
+                self.library, "rename-library", name=self.library_name.text()
+            )
+            self.accept()
+        except Exception as exc:
+            QMessageBox.warning(self, "符号库未保存", str(exc))
 
     def selected(self):
         selected = self.table.selectedItems()

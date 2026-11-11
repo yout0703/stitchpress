@@ -122,3 +122,45 @@ def save_production_stream(
         "classic_tiff": not bigtiff,
         "bigtiff": bigtiff,
     }
+
+
+def production_overview(renderer, *, max_edge=1600, cancel=lambda: False):
+    """Sample the actual full raster at global coordinates using bounded source bands."""
+    from PIL import Image
+
+    from .render import screen_rgb
+
+    width, height = renderer.layout.canvas_px
+    if width * height > MAX_STREAM_PIXELS or width > 60_000:
+        raise ResourceError("完整概览暂限2.5亿像素、宽60000px；不会改动生产尺寸")
+    if type(max_edge) is not int or not 16 <= max_edge <= 4096:
+        raise ResourceError("概览长边须为16–4096像素")
+    ratio = min(1, max_edge / max(width, height))
+    ow, oh = max(1, round(width * ratio)), max(1, round(height * ratio))
+    # Pixel-centre nearest sampling, independent of strip boundaries.
+    xs = np.minimum(width - 1, ((np.arange(ow) + 0.5) * width / ow).astype(int))
+    ys = np.minimum(height - 1, ((np.arange(oh) + 0.5) * height / oh).astype(int))
+    result = np.empty((oh, ow, 3), dtype=np.uint8)
+    rows = max(1, min(128, BAND_BYTES // (width * 4)))
+    peak = 0
+    for top in range(0, height, rows):
+        if cancel():
+            raise Cancelled("完整概览已取消")
+        end = min(height, top + rows)
+        selected = np.flatnonzero((ys >= top) & (ys < end))
+        if not len(selected):
+            continue
+        surface, _ = renderer.production(band=(top, end - top))
+        peak = max(peak, width * (end - top) * 4)
+        rgb = screen_rgb(surface.image, renderer.library.icc)
+        surface.image.close()
+        result[selected] = np.asarray(rgb)[(ys[selected] - top)[:, None], xs[None, :]]
+        rgb.close()
+    return Image.fromarray(result), dict(
+        overview=True,
+        partial=False,
+        full_size=(width, height),
+        preview_size=(ow, oh),
+        sampling="global-pixel-centre-nearest-v1",
+        max_source_band_bytes=peak,
+    )

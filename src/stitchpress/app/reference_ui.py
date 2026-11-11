@@ -1,4 +1,4 @@
-"""Six discoverable R1 pages. Existing AI and manufacturer delivery remain extensions."""
+"""Five task-oriented R1 workspaces; AI and special delivery remain extensions."""
 
 import copy
 import json
@@ -10,6 +10,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QCheckBox,
     QComboBox,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -30,6 +32,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
+    QTabBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -47,6 +51,7 @@ from stitchpress.platform.settings import settings_dir
 
 from .commerce_ui import CommerceDialog
 from .local_features import SpecificationDialog
+from .navigation import ROUTES, disclosure, install_navigation, menu_button
 from .post_settings import MissingSettingsAssets, companion_candidates, load_settings, save_settings
 from .reference_actions import bind_symbol, import_pattern
 from .reference_package import post_fingerprint
@@ -71,7 +76,19 @@ TARGET_NAMES = dict(
         strict=True,
     )
 )
-PAGE_NAMES = ("文件与设置", "画布与图纸", "文字与配线", "符号与分配", "预览与出图", "电商图片")
+
+PAGE_NAMES = tuple(route[1] for route in ROUTES)
+
+
+def page_heading(layout, title, description):
+    layout.setContentsMargins(28, 24, 28, 24)
+    layout.setSpacing(16)
+    label = text(title)
+    label.setProperty("role", "pageTitle")
+    layout.addWidget(label)
+    label = text(description)
+    label.setProperty("role", "muted")
+    layout.addWidget(label)
 
 
 def text(value):
@@ -88,8 +105,13 @@ def action(label, callback):
 
 def row(layout, *items):
     line = QHBoxLayout()
+    fields = any(not isinstance(item, QAbstractButton) for item in items)
     for item in items:
-        line.addWidget(item)
+        if not fields and item.property("role") == "primary":
+            line.addStretch()
+        line.addWidget(item, 1 if fields and not isinstance(item, QAbstractButton) else 0)
+    if not fields and not any(item.property("role") == "primary" for item in items):
+        line.addStretch()
     layout.addLayout(line)
 
 
@@ -101,6 +123,10 @@ class EditorPanel(QWidget):
         self.owner, self.kind, self.project_id = owner, kind, None
         self.layout_ = QVBoxLayout(self)
         self.layout_.setContentsMargins(0, 0, 0, 0)
+        self.form_scroll = QScrollArea()
+        self.form_scroll.setWidgetResizable(True)
+        self.layout_.addWidget(self.form_scroll, 1)
+        self.buttons = None
         self.editor = None
         self.model_sha = None
         self.reload()
@@ -132,8 +158,9 @@ class EditorPanel(QWidget):
 
     def reload(self):
         if self.editor:
-            self.layout_.removeWidget(self.editor)
-            self.editor.deleteLater()
+            self.form_scroll.takeWidget().deleteLater()
+            self.layout_.removeWidget(self.buttons)
+            self.buttons.deleteLater()
         ctor = {
             "spec": SpecificationDialog,
             "text": TextSettingsDialog,
@@ -141,6 +168,9 @@ class EditorPanel(QWidget):
         }[self.kind]
         self.editor = ctor(self.owner)
         self.editor.setWindowFlags(Qt.WindowType.Widget)
+        if self.kind == "spec":
+            self.editor.tabs.tabBar().hide()  # One shared page-level navigation.
+
         # Route the standard Save to the page transaction; Cancel reloads the page form.
         buttons = self.editor.findChildren(QDialogButtonBox)[-1]
         buttons.accepted.disconnect()
@@ -149,7 +179,10 @@ class EditorPanel(QWidget):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("恢复本页")
         buttons.accepted.connect(self.apply)
         buttons.rejected.connect(self.reload)
-        self.layout_.addWidget(self.editor)
+        self.editor.layout().removeWidget(buttons)
+        self.buttons = buttons
+        self.form_scroll.setWidget(self.editor)
+        self.layout_.addWidget(buttons)
         self.project_id = self.owner.draft.project_id
         self.start_values = copy.deepcopy(self.value())
         self.model_sha = self.model()
@@ -168,6 +201,9 @@ class EditorPanel(QWidget):
             if signal is not None:
                 signal.connect(self.owner.mark_reference_pending)
         self.editor.show()
+        if self.kind == "spec" and hasattr(self.owner, "print_stack"):
+            self.owner.select_print_section(self.owner.print_tabs.currentIndex())
+        self.owner.update_pending_navigation()
 
     def sync(self):
         if self.project_id != self.owner.draft.project_id or (
@@ -218,19 +254,6 @@ class ReferenceFeatures:
         self.reference_panels = []
         self.reference_nav = []
         self.reference_project = None
-        nav = QWidget()
-        nav_layout = QHBoxLayout(nav)
-        nav_layout.setContentsMargins(20, 4, 20, 8)
-        for number, name in enumerate(PAGE_NAMES, 3):
-            button = QPushButton(name)
-            button.setCheckable(True)
-            button.toggled.connect(
-                lambda checked, index=number: self.show_page(index) if checked else None
-            )
-            self.reference_nav.append(button)
-            self.navigation_group.addButton(button)
-            nav_layout.addWidget(button)
-        self.centralWidget().layout().insertWidget(2, nav)
         for build in (
             self.file_page,
             self.spec_page,
@@ -240,96 +263,124 @@ class ReferenceFeatures:
             self.commerce_page,
         ):
             content = build()
+            if build in (self.post_page, self.spec_page, self.commerce_page):
+                self.pages.addWidget(content)
+                continue
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(content)
             self.pages.addWidget(scroll)
+        install_navigation(self)
         self.show_page(3)
 
     def mark_reference_pending(self, *args):
+        if not hasattr(self, "_post_baseline"):
+            return
         if hasattr(self, "preview_state"):
-            self.preview_state.setText("页面参数正在编辑；请先应用，再刷新实际预览")
+            self.preview_state.setText("有尚未应用的参数；请先应用，再刷新预览。")
+        self.update_pending_navigation()
+
+    def update_pending_navigation(self):
+        if not hasattr(self, "_post_baseline"):
+            return
+        pending = set()
+        for panel in self.reference_panels:
+            if panel.pending():
+                pending.add({"spec": 4, "text": 4, "commerce": 8}[panel.kind])
+        try:
+            if self.thread_values() != self._thread_baseline:
+                pending.add(6)
+        except Exception:
+            pending.add(6)
+        try:
+            current = self.post_values().to_dict()
+            current["thread_plans"] = self._post_baseline["thread_plans"]
+            if current != self._post_baseline:
+                pending.add(7)
+        except Exception:
+            pending.add(7)
+        for nav, (index, name, _, tip) in zip(self.reference_nav, ROUTES, strict=True):
+            nav.setText(name + (" · 未应用" if index in pending else ""))
+            nav.setToolTip(tip + ("；有未应用更改" if index in pending else ""))
+        if not pending and self.preview_state.text().startswith("有尚未应用的参数"):
+            self.preview_state.setText("页面参数已恢复或应用；刷新预览以核对当前结果。")
 
     def file_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(
-            text("从已有全针 XSD 开始：确认对应原图和货号，设置尺寸与符号，再预览并输出参考全套。")
-        )
-        row(
-            layout,
-            action("导入全针 XSD…", self.import_reference_pattern),
-            action("选择对应原图…", self.choose_image),
-            action("打开作品…", self.open_project),
-            action("保存作品", self.save),
-            action("另存作品…", self.save_as),
-        )
+        page_heading(layout, "作品", "从已有图纸开始，确认作品信息与对应原图。")
         form = QFormLayout()
         self.ref_title, self.ref_code = QLineEdit(), QLineEdit()
         for field, old in ((self.ref_title, self.title_edit), (self.ref_code, self.code_edit)):
+            field.setMaximumWidth(660)
             field.textChanged.connect(old.setText)
             field.editingFinished.connect(self.apply_fields)
         form.addRow("作品名称", self.ref_title)
-        form.addRow("客户货号（保留前导零）", self.ref_code)
+        form.addRow("客户货号", self.ref_code)
         layout.addLayout(form)
+        source = QGroupBox("输入文件")
+        source.setMaximumWidth(900)
+        sl = QVBoxLayout(source)
         row(
-            layout,
-            action("采用 XSD 文件名作为货号建议", self.accept_code_suggestion),
-            action("发现同名对应图…", self.discover_companions),
+            sl,
+            action("导入 XSD…", self.import_reference_pattern),
+            action("选择对应原图…", self.choose_image),
+            menu_button(
+                "更多",
+                (
+                    ("使用 XSD 文件名作为货号", self.accept_code_suggestion),
+                    ("查找同名对应图…", self.discover_companions),
+                ),
+            ),
         )
-        self.source_confirm = QCheckBox("我已核对：对应原图与当前 XSD 是同一作品")
+        self.ref_input_report = text("尚未导入图纸")
+        sl.addWidget(self.ref_input_report)
+        self.source_confirm = QCheckBox("已核对：对应原图与 XSD 为同一作品")
         self.source_confirm.toggled.connect(self.confirm_correspondence)
-        layout.addWidget(self.source_confirm)
-        self.ref_input_report = text("尚未导入参考原稿")
-        layout.addWidget(self.ref_input_report)
-        row(
-            layout,
-            action("导出作品设置 JSON…", self.save_reference_settings),
-            action("打开作品设置 JSON…", self.open_reference_settings),
-            action("选择输出父目录…", self.choose_post_folder),
-        )
-        from stitchpress.platform.settings import load_settings as load_local
-
-        self.post_folder = QLineEdit(
-            load_local().get("reference_output_directory")
-            or str(Path.home() / "Documents" / "StitchPress")
-        )
-        self.post_folder.setReadOnly(True)
-        form = QFormLayout()
-        form.addRow("输出父目录（每次建立新版本）", self.post_folder)
-        layout.addLayout(form)
-        layout.addWidget(
-            text(
-                "设置 JSON 与同名资源目录须一起移动；资源缺失可重新定位，SHA 不匹配会停止打开。"
-                "常用尺寸预设在“画布与图纸 → 预设”。"
-            )
-        )
+        sl.addWidget(self.source_confirm)
+        self.ref_source_details = text("")
+        sl.addWidget(disclosure("查看来源详情", self.ref_source_details))
+        layout.addWidget(source)
+        note = text("返单可从「文件」打开作品或作品设置。输出目录在「检查与导出」设置。")
+        note.setProperty("role", "muted")
+        layout.addWidget(note)
+        next_button = action("设置印花与图纸", lambda: self.show_page(4))
+        next_button.setProperty("role", "primary")
+        row(layout, next_button)
         layout.addStretch()
         return page
 
     def spec_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        page_heading(layout, "印花与图纸", "调整实际尺寸、阅读图纸和标题页脚。")
+        self.print_tabs = QTabBar()
+        for title in ("尺寸与布料", "阅读图纸", "标题与页脚", "预设"):
+            self.print_tabs.addTab(title)
         self.spec_panel = EditorPanel(self, "spec")
         self.reference_panels.append(self.spec_panel)
-        layout.addWidget(self.spec_panel)
+        self.print_stack = QStackedWidget()
+        self.print_stack.addWidget(self.spec_panel)
+        layout.addWidget(self.print_tabs)
+        layout.addWidget(self.print_stack)
+        self.print_tabs.currentChanged.connect(self.select_print_section)
         return page
 
+    def select_print_section(self, index):
+        if index == 2:
+            self.print_stack.setCurrentIndex(1)
+        else:
+            self.print_stack.setCurrentIndex(0)
+            self.spec_panel.editor.tabs.setCurrentIndex({0: 0, 1: 1, 3: 3}.get(index, 0))
+
     def text_page(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        tabs = QTabWidget()
         self.text_panel = EditorPanel(self, "text")
         self.reference_panels.append(self.text_panel)
-        tabs.addTab(self.text_panel, "画布 / 查图 / 符号表文字")
-        threads = QWidget()
-        form = QVBoxLayout(threads)
+        self.print_stack.addWidget(self.text_panel)
+        self.threads_page = QWidget()
+        form = QVBoxLayout(self.threads_page)
         form.addWidget(
-            text(
-                "每行一套 CT 与每米针数；各 CT 独立输出 Excel。"
-                "米数 = 逐色针数 ÷ 每米针数后向上取整。"
-                "系数由你按材料规则确认，软件不猜默认值。"
-            )
+            text("各 CT 独立输出配线 Excel。每色米数向上取整；每米针数需按材料规则确认。")
         )
         self.thread_table = QTableWidget(0, 4)
         self.thread_table.setHorizontalHeaderLabels(["CT", "每米针数", "系数来源", "已确认"])
@@ -337,24 +388,37 @@ class ReferenceFeatures:
         form.addWidget(self.thread_table)
         row(
             form,
-            action("添加 CT 规则", self.add_thread_row),
-            action("移除选中规则", self.remove_thread_row),
+            action("添加规则", self.add_thread_row),
+            action("移除选中", self.remove_thread_row),
             action("应用配线规则", self.apply_thread_rows),
         )
-        tabs.addTab(threads, "多 CT 配线")
-        layout.addWidget(tabs)
-        return page
+        self.thread_table.itemChanged.connect(self.mark_reference_pending)
+        return QWidget()  # Reserved old route; show_page redirects to print text tab.
 
     def symbol_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        page_heading(layout, "符号与配线", "选择符号库，完成线色分配与材料规则。")
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+        mapping = QWidget()
+        layout = QVBoxLayout(mapping)
+        tabs.addTab(mapping, "符号分配")
+        tabs.addTab(self.threads_page, "配线规则")
+        self.material_tabs = tabs
         row(
             layout,
-            action("选择已存符号库…", self.select_reference_library),
-            action("导入客户资源包…", self.import_resources),
-            action("从文件夹导入符号…", self.import_reference_symbols),
-            action("选择符号输出 ICC…", self.import_symbol_icc),
-            action("编辑当前库…", self.manage_symbols),
+            action("选择符号库…", self.select_reference_library),
+            menu_button(
+                "管理符号库",
+                (
+                    ("编辑 / 重命名当前库…", self.manage_symbols),
+                    ("从文件夹导入…", self.import_reference_symbols),
+                    ("导入客户资源包…", self.import_resources),
+                    (None, None),
+                    ("设置符号输出 ICC…", self.import_symbol_icc),
+                ),
+            ),
         )
         self.ref_library_label = text("")
         layout.addWidget(self.ref_library_label)
@@ -392,100 +456,171 @@ class ReferenceFeatures:
             action("按着墨色接近自动匹配…", self.auto_reference_symbols),
         )
         layout.addWidget(
-            text(
-                "匹配 color-nearest-v1：手动项优先，其余按针数从多到少，以符号平均"
-                "着墨色与线色距离选择未用符号。"
-                "并列按自然线号和库顺序稳定处理。"
-                "实际 CT 小符号与大图仅屏幕预览，打印可读性另验。"
+            disclosure(
+                "匹配规则与打印说明",
+                text(
+                    "保留手动项后，按针数从多到少，选择着墨色最接近的未使用符号。"
+                    "同距离时按线号与库顺序稳定处理。屏幕预览不能替代 14/16CT 打印可读性验收。"
+                ),
             )
         )
         return page
 
     def post_page(self):
+        from stitchpress.core.commerce import TARGETS
+        from stitchpress.platform.settings import load_settings as load_local
+
+        from .desktop import Canvas
+
         page = QWidget()
         layout = QVBoxLayout(page)
-        self.post_summary = text("点击“检查尺寸和出图估算”取得与导出相同的计划。")
-        layout.addWidget(self.post_summary)
-        row(
-            layout,
-            action("检查尺寸和出图估算", self.plan_reference_output),
-            action("登记本次核对…", self.review_reference_output),
-            action("打开上次输出目录", self.open_post_folder),
-            action("本地任务与失败恢复…", self.post_task_history),
-        )
-        preview_box = QGroupBox("实际目标预览")
-        form = QFormLayout(preview_box)
+        page_heading(layout, "检查与导出", "先查看实际预览，再核对并输出所需文件。")
+        self.post_tabs = QTabWidget()
+        layout.addWidget(self.post_tabs, 1)
+        preview = QWidget()
+        pl = QVBoxLayout(preview)
         self.post_preview_target = QComboBox()
         for key in ("production", "whole", "pages", "symbols", "card", "effect"):
             self.post_preview_target.addItem(TARGET_NAMES[key], key)
-        from stitchpress.core.commerce import TARGETS
-
         for key in TARGETS:
-            self.post_preview_target.addItem("电商 · " + key, key)
+            from stitchpress.core.commerce import CONTENTS
+
+            name = (
+                "详情 · " + CONTENTS[key.removeprefix("detail-")]
+                if key.startswith("detail-")
+                else "方图 " + key.rsplit("-", 1)[-1]
+            )
+            self.post_preview_target.addItem(name, key)
         self.post_preview_number = QSpinBox()
-        self.post_preview_number.setRange(1, 100)
-        form.addRow("目标", self.post_preview_target)
-        form.addRow("查图 / 符号表 / 卡页码", self.post_preview_number)
-        form.addRow(action("刷新实际预览…", self.preview_reference_output))
-        self.preview_state = text("参数变化后须刷新；后台旧快照不会覆盖当前预览。")
-        form.addRow(self.preview_state)
-        layout.addWidget(preview_box)
-        targets = QGroupBox("参考全套 / 单项输出")
-        target_layout = QVBoxLayout(targets)
+        self.post_preview_number.setRange(1, 200)
+        self.post_preview_number.setPrefix("第 ")
+        self.post_preview_number.setSuffix(" 页")
+        self.post_preview_number.setAccessibleName("预览页码")
+        self.post_preview_number.setMaximumWidth(110)
+        self.post_preview_number.setEnabled(False)
+        row(
+            pl,
+            self.post_preview_target,
+            self.post_preview_number,
+            action("刷新预览", self.preview_reference_output),
+        )
+        self.post_preview_canvas = Canvas()
+        self.post_preview_canvas.setMinimumHeight(210)
+        pl.addWidget(self.post_preview_canvas, 1)
+        self.preview_state = text("选择目标并刷新预览。更改参数后需要重新生成。")
+        pl.addWidget(self.preview_state)
+        self.post_actual = action("100% 像素", self.post_preview_canvas.actual_pixels)
+        row(
+            pl,
+            self.post_actual,
+            action("适应窗口", self.post_preview_canvas.fit),
+            action("放大", lambda: self.post_preview_canvas.zoom(1.2)),
+            action("缩小", lambda: self.post_preview_canvas.zoom(1 / 1.2)),
+        )
+        self.post_tabs.addTab(preview, "实际预览")
+        options = QWidget()
+        ol = QVBoxLayout(options)
         self.post_targets = {}
-        for key, name in TARGET_NAMES.items():
+        grid = QGridLayout()
+        for index, (key, name) in enumerate(TARGET_NAMES.items()):
             item = QCheckBox(name)
             self.post_targets[key] = item
-            target_layout.addWidget(item)
-        layout.addWidget(targets)
-        form = QFormLayout()
+            grid.addWidget(item, index // 2, index % 2)
+            item.toggled.connect(self.mark_reference_pending)
+        ol.addLayout(grid)
+        self.post_folder = QLineEdit(
+            load_local().get("reference_output_directory")
+            or str(Path.home() / "Documents" / "StitchPress")
+        )
+        self.post_folder.setReadOnly(True)
+        row(ol, self.post_folder, action("选择输出目录…", self.choose_post_folder))
+        self.post_demo = QCheckBox("草稿输出（示例符号可用，文件标记 DRAFT）")
+        self.post_demo.setChecked(True)
+        ol.addWidget(self.post_demo)
+        advanced = QWidget()
+        form = QFormLayout(advanced)
         self.jpeg_quality = QSpinBox()
         self.jpeg_quality.setRange(80, 100)
         self.tiff_container = QComboBox()
-        self.tiff_container.addItem("Classic TIFF（默认）", "classic")
-        self.tiff_container.addItem("BigTIFF（生产图）", "bigtiff")
-        self.bigtiff_confirm = QCheckBox("已确认目标读取软件支持 BigTIFF")
+        self.tiff_container.addItem("Classic TIFF", "classic")
+        self.tiff_container.addItem("BigTIFF", "bigtiff")
+        self.bigtiff_confirm = QCheckBox("已确认目标软件支持 BigTIFF")
         self.effect_cell = QSpinBox()
         self.effect_cell.setRange(6, 36)
-        self.post_demo = QCheckBox("草稿输出（示例符号可用，文件以 DRAFT 标记）")
-        self.post_demo.setChecked(True)
         for name, widget in (
             ("JPEG 质量", self.jpeg_quality),
             ("TIFF 容器", self.tiff_container),
             ("兼容确认", self.bigtiff_confirm),
             ("点图每格像素", self.effect_cell),
-            ("模式", self.post_demo),
         ):
             form.addRow(name, widget)
-        layout.addLayout(form)
+        ol.addWidget(disclosure("高级输出设置", advanced))
+        ol.addWidget(action("应用输出设置", self.apply_post_options))
+        ol.addWidget(text("每次生成独立目录。正式输出需客户符号库、CMYK ICC 与本次核对。"))
+        ol.addStretch()
+        options_scroll = QScrollArea()
+        options_scroll.setWidgetResizable(True)
+        options_scroll.setWidget(options)
+        self.post_tabs.addTab(options_scroll, "输出设置")
+        self.post_summary = text("尚未检查当前输出计划。")
+        self.post_summary.setProperty("role", "muted")
+        layout.addWidget(self.post_summary)
+        generate = self.post_generate = action("生成所选文件…", self.export_reference_output)
+        generate.setProperty("role", "primary")
         row(
             layout,
-            action("应用输出选项", self.apply_post_options),
-            action("生成所选参考文件…", self.export_reference_output),
-            action("取消当前任务", self.cancel_job),
+            action("检查尺寸与文件", self.plan_reference_output),
+            action("确认本次核对…", self.review_reference_output),
+            generate,
         )
-        layout.addWidget(
-            text(
-                "正式输出须客户符号库 / CMYK ICC，以及当前原稿、映射和尺寸核对。"
-                "这里不要求二期 AI 或专用交付审核。"
-                "每次发布新目录；失败或取消不发布半成品。"
-            )
+        row(
+            layout,
+            menu_button(
+                "结果与检查详情",
+                (
+                    ("打开上次输出目录", self.open_post_folder),
+                    ("查看检查详情…", self.show_post_plan_details),
+                ),
+            ),
         )
+        for spin in (self.jpeg_quality, self.effect_cell):
+            spin.valueChanged.connect(self.mark_reference_pending)
+        self.tiff_container.currentIndexChanged.connect(self.mark_reference_pending)
+        self.bigtiff_confirm.toggled.connect(self.mark_reference_pending)
+        self.post_preview_target.currentIndexChanged.connect(self.preview_target_changed)
+        self.post_preview_number.valueChanged.connect(self.preview_target_changed)
         return page
+
+    def preview_target_changed(self, *args):
+        paged = self.post_preview_target.currentData() in {"pages", "symbols", "card"}
+        self.post_preview_number.setEnabled(paged)
+        if not paged:
+            self.post_preview_number.setValue(1)
+        self.preview_state.setText("预览目标已改变；请刷新以查看所选文件。")
 
     def commerce_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        page_heading(layout, "商品图片", "配置展示源、三张场景和详情 / 方图内容。")
         self.commerce_panel = EditorPanel(self, "commerce")
         self.reference_panels.append(self.commerce_panel)
         layout.addWidget(self.commerce_panel)
         row(
             layout,
             action("图形化挑选场景 / 相框…", self.commerce_gallery),
-            action("预览电商目标…", self.preview_commerce),
+            action("查看实际商品图", self.open_commerce_preview),
             action("导出 JPG 组 / 单张…", self.export_reference_commerce),
         )
         return page
+
+    def open_commerce_preview(self):
+        self.post_preview_target.setCurrentIndex(
+            self.post_preview_target.findData("detail-scene-1")
+        )
+        if self.post_preview_target.currentIndex() < 0:
+            self.post_preview_target.setCurrentIndex(6)
+        self.post_tabs.setCurrentIndex(0)
+        self.show_page(7)
 
     def reference_pending(self):
         if any(panel.pending() for panel in getattr(self, "reference_panels", ())):
@@ -504,10 +639,19 @@ class ReferenceFeatures:
         if not self.apply_fields():
             return False
         if self.reference_pending():
-            raise StitchPressError(
-                "有尚未应用的页面参数，请先点击对应页面的保存 / 应用，"
-                "或取消恢复后再预览、保存或导出"
-            )
+            for panel in self.reference_panels:
+                if panel.pending():
+                    index = {"spec": 4, "text": 5, "commerce": 8}[panel.kind]
+                    self.show_page(index)
+                    if panel.kind == "spec":
+                        self.print_tabs.setCurrentIndex(0)
+                    raise StitchPressError("已定位到未应用的设置；请应用更改或恢复本页，再继续。")
+            self.show_page(6 if self.thread_values() != self._thread_baseline else 7)
+            if self.pages.currentIndex() == 6:
+                self.material_tabs.setCurrentIndex(1)
+            else:
+                self.post_tabs.setCurrentIndex(1)
+            raise StitchPressError("已定位到未应用的设置；请应用更改后再继续。")
         return True
 
     def refresh_reference_pages(self):
@@ -528,9 +672,9 @@ class ReferenceFeatures:
             f"{self.design.width} × {self.design.height} 格 · {sum(self.design.counts):,} 针 · "
             f"{sum(n > 0 for n in self.design.counts)} 色 · "
             f"空白 {self.design.width * self.design.height - sum(self.design.counts):,} 格\n"
-            f"XSD SHA：{record.get('sha256', '无原始XSD记录')}\n"
             f"对应原图：{source.get('filename', source.get('asset', '尚未绑定'))}"
         )
+        self.ref_source_details.setText(f"原稿 SHA256：{record.get('sha256', '尚无记录')}")
         for panel in self.reference_panels:
             panel.sync()
         project_changed = self.reference_project != self.draft.project_id
@@ -551,7 +695,10 @@ class ReferenceFeatures:
             self._post_baseline = self.post_values().to_dict()
         self.reference_project = self.draft.project_id
         self.refresh_reference_symbols()
+        self.update_pending_navigation()
         current = post_fingerprint(self.draft)
+        if getattr(self, "_post_plan_sha", None) != current:
+            self.post_summary.setText("当前参数尚未检查；请检查尺寸与文件。")
         if getattr(self, "_reference_preview_sha", None) != current:
             self.preview_state.setText("预览待刷新 / 参数已改变；请查看当前真实目标")
 
@@ -575,11 +722,14 @@ class ReferenceFeatures:
         confirmed = QCheckBox("已核对")
         confirmed.setChecked(plan.get("confirmed", False))
         self.thread_table.setCellWidget(index, 3, confirmed)
+        confirmed.toggled.connect(self.mark_reference_pending)
+        self.mark_reference_pending()
 
     def remove_thread_row(self):
         index = self.thread_table.currentRow()
         if index >= 0:
             self.thread_table.removeRow(index)
+            self.mark_reference_pending()
 
     def thread_values(self):
         return [
@@ -751,7 +901,7 @@ class ReferenceFeatures:
             return
         self._symbol_page_sha = token
         self.ref_library_label.setText(
-            f"当前库 {library.revision[:16]} · {len(library.symbols)} 个符号 · {library.usage} · "
+            f"{library.name} · {len(library.symbols)} 个符号 · "
             + ("已带 CMYK ICC" if library.icc else "无 ICC，仅草稿")
         )
         self.ref_symbols.clear()
@@ -959,11 +1109,18 @@ class ReferenceFeatures:
         }
         records.setdefault(base["revision"], base)
         keys = list(records)
+        labels = [f"{records[key].get('name', '未命名符号库')} · {key[:12]}" for key in keys]
         chosen, ok = QInputDialog.getItem(
-            self, "当前作品保存的符号库", "选择库版本（重新匹配；旧映射保留于历史）", keys, 0, False
+            self,
+            "当前作品保存的符号库",
+            "选择库版本（重新匹配；旧映射保留于历史）",
+            labels,
+            0,
+            False,
         )
         if ok:
             try:
+                chosen = keys[labels.index(chosen)]
                 self.install_reference_library(
                     records[chosen], base_assets if chosen == base["revision"] else {}
                 )
@@ -977,9 +1134,13 @@ class ReferenceFeatures:
         except Exception as exc:
             self.error(exc)
 
+    def show_post_plan_details(self):
+        QMessageBox.information(self, "输出检查详情", getattr(self, "_plan_detail", "尚未检查。"))
+
     def show_post_plan(self, result):
+        self._post_plan_sha = post_fingerprint(self.draft)
         paper = result["paper_px"] or ("未选查图", "—")
-        self.post_summary.setText(
+        self._plan_detail = (
             f"{result['stitches']:,} 针 · {result['colors']} 色 · "
             f"画心 {' × '.join(result['artwork_cm'])} cm · "
             f"含留边 {' × '.join(result['cloth_cm'])} cm\n"
@@ -992,6 +1153,14 @@ class ReferenceFeatures:
             f"· 电商 {result['commerce_files']} 张 "
             f"· 工作磁盘预留约 {result['estimate_bytes'] / 1024**2:.1f} MiB"
         )
+
+        self.post_summary.setText(
+            f"{result['stitches']:,} 针 · {result['colors']} 色 · "
+            f"整布 {' × '.join(result['cloth_cm'])} cm\n"
+            f"生产 {result['production_dpi']} DPI · 查图 {result['reference_dpi']} DPI / "
+            f"{result['page_count']} 页 · 电商 {result['commerce_files']} 张"
+        )
+        self.post_summary.setToolTip(self._plan_detail)
 
     def preview_reference_output(self):
         try:
@@ -1010,36 +1179,22 @@ class ReferenceFeatures:
     def show_post_preview(self, result):
         from PIL import Image
 
-        from .desktop import Canvas
-
-        dialog = QDialog(self)
-        dialog.resize(980, 760)
-        dialog.setWindowTitle("参考目标 · 实际渲染预览")
-        layout = QVBoxLayout(dialog)
         checks = result["checks"]
-        preview_size = " × ".join(str(v) for v in checks.get("preview_size", ()))
-        preview_title = TARGET_NAMES.get(checks.get("target"), "电商图片")
-        layout.addWidget(
-            text(
-                ("仅显示首条带，不是整张缩略图。 " if checks.get("partial") else "")
-                + f"{preview_title} · {preview_size} px · "
-                f"第 {checks.get('page', 1)} 页"
-            )
-        )
-        canvas = Canvas()
+        if (
+            checks.get("target") != self.post_preview_target.currentData()
+            or checks.get("page", 1) != self.post_preview_number.value()
+        ):
+            self.preview_state.setText("旧目标预览已完成；当前目标不同，请刷新当前目标。")
+            return
+        size = " × ".join(str(v) for v in checks.get("preview_size", ()))
+        title = TARGET_NAMES.get(checks.get("target"), "商品图片")
         with Image.open(result["preview"]) as source:
-            canvas.set_image(source.copy(), fit=True)
-        layout.addWidget(canvas, 1)
-        row(
-            layout,
-            action("放大", lambda: canvas.zoom(1.2)),
-            action("缩小", lambda: canvas.zoom(1 / 1.2)),
-            action("100% 原像素", canvas.actual_pixels),
-            action("适应窗口", canvas.fit),
-        )
+            self.post_preview_canvas.set_image(source.copy(), fit=True)
         self._reference_preview_sha = post_fingerprint(self.draft)
-        self.preview_state.setText("已显示当前快照实际预览；更改参数后需刷新")
-        dialog.exec()
+        note = "完整缩略概览 · 非生产原像素 · " if checks.get("overview") else ""
+        self.preview_state.setText(f"{note}{title} · {size} px · 第 {checks.get('page', 1)} 页")
+        self.post_actual.setText("100% 概览像素" if checks.get("overview") else "100% 原像素")
+        self.post_tabs.setCurrentIndex(0)
 
     def review_reference_output(self):
         try:

@@ -61,43 +61,73 @@ class SpecificationDialog(QDialog):
         self.font_name = None
         self.preset_store = PresetStore(settings_dir() / "presets")
         layout = QVBoxLayout(self)
-        tabs = QTabWidget()
+        tabs = self.tabs = QTabWidget()
         layout.addWidget(tabs)
         fabric_page = QWidget()
         form = QFormLayout(fabric_page)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setVerticalSpacing(16)
         self.fabric_fields = {
             k: QLineEdit() for k in ("sx", "sy", "left", "top", "right", "bottom", "nominal_ct")
         }
+        for field in self.fabric_fields.values():
+            field.setMaximumWidth(180)
         self.margin_unit = QComboBox()
         for text, unit in (("厘米 cm", "cm"), ("毫米 mm", "mm"), ("实际针格数", "cells")):
             self.margin_unit.addItem(text, unit)
+        self.margin_unit.setMaximumWidth(180)
         self._margin_unit = "cm"
-        form.addRow("四边留白的输入单位", self.margin_unit)
         self.dpi = QSpinBox()
         self.dpi.setRange(72, 1200)
         self.dpi.setSuffix(" DPI")
-        form.addRow("输出分辨率（厂家默认300）", self.dpi)
-        for name, text in (
-            ("sx", "横向实际格距 cm"),
-            ("sy", "纵向实际格距 cm"),
-            ("left", "左留白"),
-            ("top", "上留白"),
-            ("right", "右留白"),
-            ("bottom", "下留白"),
-            ("nominal_ct", "名义 CT（不自动改格距）"),
-        ):
-            form.addRow(text, self.fabric_fields[name])
-        theoretical = QPushButton("按此 CT 计算理论格距")
+        self.dpi.setMaximumWidth(180)
+        theoretical = QPushButton("按布号计算")
         theoretical.clicked.connect(self.theoretical)
-        form.addRow(theoretical)
+        line = QHBoxLayout()
+        line.addWidget(self.fabric_fields["nominal_ct"])
+        line.addWidget(theoretical)
+        line.addStretch()
+        form.addRow("名义布号 CT", line)
+        self.fabric_fields["nominal_ct"].setAccessibleName("名义布号 CT")
         self.target_width = QLineEdit()
-        self.target_width.setPlaceholderText("例如 43.44；只改变物理尺寸，针格不变")
-        form.addRow("目标画心宽度 cm", self.target_width)
-        target = QPushButton("应用目标宽度，保持横纵格距比例")
+        self.target_width.setMaximumWidth(180)
+        self.target_width.setPlaceholderText("画心宽度 cm")
+        self.target_width.setAccessibleName("目标画心宽度 cm")
+        target = QPushButton("按宽度计算")
         target.clicked.connect(self.apply_width)
-        form.addRow(target)
-        form.addRow(QLabel("实际格距与理论 CT 分别记录。不会通过改针数补偿尺寸。"))
+        target.setToolTip("保持横纵实际格距比例，不改变针数")
+        line = QHBoxLayout()
+        line.addWidget(self.target_width)
+        line.addWidget(target)
+        line.addStretch()
+        form.addRow("目标宽度 cm", line)
+        line = QHBoxLayout()
+        for key, title in (("sx", "横向"), ("sy", "纵向")):
+            line.addWidget(QLabel(title))
+            line.addWidget(self.fabric_fields[key])
+            self.fabric_fields[key].setAccessibleName(title + "实际格距 cm")
+        line.addStretch()
+        form.addRow("实际格距 cm", line)
+        self.effective_ct = QLabel()
+        self.effective_ct.setWordWrap(True)
+        form.addRow("等效 CT", self.effective_ct)
+        for key in ("sx", "sy"):
+            self.fabric_fields[key].textChanged.connect(self.update_effective_ct)
+        form.addRow("留白单位", self.margin_unit)
+        for items in ((("left", "左"), ("right", "右")), (("top", "上"), ("bottom", "下"))):
+            line = QHBoxLayout()
+            for key, title in items:
+                line.addWidget(QLabel(title))
+                line.addWidget(self.fabric_fields[key])
+                self.fabric_fields[key].setAccessibleName(title + "留白")
+            line.addStretch()
+            form.addRow("四边留白", line)
+        form.addRow("生产分辨率", self.dpi)
+        note = QLabel(
+            "名义CT与等效CT分别记录。尺寸改变不增减针数；查图分辨率在阅读图纸中单独设置。"
+        )
+        note.setWordWrap(True)
+        form.addRow(note)
         tabs.addTab(fabric_page, "尺寸与布料")
         reference_page = QWidget()
         form = QFormLayout(reference_page)
@@ -206,6 +236,20 @@ class SpecificationDialog(QDialog):
         buttons.accepted.connect(self.validate_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def update_effective_ct(self):
+        from decimal import Decimal, InvalidOperation
+
+        try:
+            values = [Decimal(self.fabric_fields[key].text()) for key in ("sx", "sy")]
+            if any(not value.is_finite() or value <= 0 for value in values):
+                raise ValueError()
+            self.effective_ct.setText(
+                f"横向 {Decimal('2.54') / values[0]:.3f} CT · "
+                f"纵向 {Decimal('2.54') / values[1]:.3f} CT"
+            )
+        except (InvalidOperation, ValueError):
+            self.effective_ct.setText("请输入有效的正格距")
 
     def fill(self, fabric, reference):
         self.fabric_source, self.fabric_dpi = fabric.source, fabric.dpi
@@ -719,7 +763,9 @@ class LocalFeatures:
         self.recovery_timer.timeout.connect(self.checkpoint_draft)
         self.recovery_timer.start(20_000)
         if records := self.recovery.candidates():
-            self.statusBar().showMessage(f"发现 {len(records)} 份可恢复草稿；可在母版菜单中恢复。")
+            self.statusBar().showMessage(
+                f"发现 {len(records)} 份可恢复草稿；可在「文件 → 恢复未保存草稿」中恢复。"
+            )
 
     def checkpoint_draft(self):
         form = self.pending_form()

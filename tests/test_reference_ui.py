@@ -17,13 +17,13 @@ from stitchpress.core.resources import assign_symbols, library_from_assets
 from stitchpress.core.streaming import save_production_stream
 
 
-def test_six_pages_apply_cancel_conflict_and_project_switch(qtbot, monkeypatch):
+def test_five_workspaces_apply_cancel_conflict_and_project_switch(qtbot, monkeypatch):
     w = Workbench()
     qtbot.addWidget(w)
     errors = []
     monkeypatch.setattr(w, "error", errors.append)
     assert w.pages.count() == 9 and w.pages.currentIndex() == 3
-    for index, button in enumerate(w.reference_nav, 3):
+    for index, button in zip((3, 4, 6, 8, 7), w.reference_nav, strict=True):
         button.setChecked(True)  # Native AX toggles without emitting clicked().
         assert w.pages.currentIndex() == index and button.isChecked()
     original_fabric = dict(w.draft.entities["fabric"])

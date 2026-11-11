@@ -79,6 +79,11 @@ def apply_appearance(app: QApplication, root, theme):
         QMainWindow, QDialog, QStackedWidget { background: $bg; }
         QFrame#documentHeader, QFrame#viewToolbar, QFrame#palettePanel,
         QFrame#selectionDock, QFrame#inspector, QFrame#pageCard { background: $panel; }
+        QFrame#navigationRail { background: $panel; border-right: 1px solid $line; }
+        QPushButton[role="navigation"] { text-align: left; border: none;
+            padding: 12px 10px; min-height: 24px; }
+        QPushButton[role="navigation"]:checked { background: $selected; color: $accent; }
+        QListWidget { background: $raised; border: 1px solid $line; border-radius: 6px; }
         QFrame#documentHeader { border-bottom: 1px solid $line; }
         QFrame#viewToolbar { border-bottom: 1px solid $line; }
         QFrame#palettePanel { border-right: 1px solid $line; }
