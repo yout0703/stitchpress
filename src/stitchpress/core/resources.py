@@ -43,6 +43,13 @@ class SymbolLibrary:
     usage: str
 
     def __post_init__(self):
+        if self.icc:
+            try:
+                profile = ImageCms.ImageCmsProfile(io.BytesIO(self.icc))
+                if profile.profile.xcolor_space.strip() != "CMYK":
+                    raise ValueError("not CMYK")
+            except Exception as exc:
+                raise ResourceError("符号库共享ICC损坏或不是CMYK配置") from exc
         if not self.symbols or len({s.key for s in self.symbols}) != len(self.symbols):
             raise ResourceError("符号库为空或ID重复")
         if len({s.pixel_sha for s in self.symbols}) != len(self.symbols):
@@ -67,7 +74,9 @@ def parse_symbol(data: bytes, external_id: int | str, filename: str) -> Symbol:
             raise ResourceError("符号图块为空白")
         if source.info.get("icc_profile"):
             try:
-                ImageCms.ImageCmsProfile(io.BytesIO(source.info["icc_profile"]))
+                profile = ImageCms.ImageCmsProfile(io.BytesIO(source.info["icc_profile"]))
+                if profile.profile.xcolor_space.strip() != "CMYK":
+                    raise ValueError("CMYK tile with non-CMYK ICC")
             except Exception as exc:
                 raise ResourceError("符号ICC损坏") from exc
         return Symbol(

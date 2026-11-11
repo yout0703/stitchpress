@@ -14,7 +14,7 @@ from stitchpress.core.documents import write_counts, write_pdf
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256
 from stitchpress.core.layout import Fabric, page_plan
-from stitchpress.core.models import Design, ReviewRecord
+from stitchpress.core.models import Design, ReviewRecord, ThreadColor, validate_catalog_membership
 from stitchpress.core.render import Renderer, stitch_preview
 from stitchpress.core.resources import SymbolLibrary, bundled_font
 from stitchpress.platform.files import atomic_write
@@ -35,6 +35,7 @@ def export_package(
     destination: Path,
     work: Path,
     review: ReviewRecord | None,
+    catalog: tuple[ThreadColor, ...] = (),
     demo: bool = False,
     cancel: Callable[[], bool] = lambda: False,
     progress: Callable[[dict], None] = lambda event: None,
@@ -43,6 +44,7 @@ def export_package(
         if review is None:
             raise StitchPressError("母版尚未完成具名审核冻结，不能生产")
         review.validate(design)
+        validate_catalog_membership(design, catalog)
         if not library.icc or library.usage != "customer-imported":
             raise StitchPressError("正式印花需要导入客户符号和CMYK ICC，演示库不可生产")
         if fabric.dpi != 300:
@@ -65,6 +67,7 @@ def export_package(
         "engine": __version__,
         "font_sha": sha256(bundled_font().read_bytes()),
         "symbol_pixels": {s.key: s.pixel_sha for s in library.symbols},
+        "catalog_membership": [c.key for c in catalog],
         "demo": demo,
     }
     job_id = uuid4().hex

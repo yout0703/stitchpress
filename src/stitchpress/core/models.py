@@ -113,6 +113,19 @@ def new_design(width: int, height: int, palette, labels, **kwargs) -> Design:
     )
 
 
+def validate_catalog_membership(design: Design, catalog: tuple[ThreadColor, ...]):
+    if not catalog:
+        raise StitchPressError("正式印花需要已导入的线色目录，不能按RGB猜测线号")
+    known = {(c.brand, c.code) for c in catalog}
+    unresolved = [
+        f"{c.brand} {c.code}"
+        for c, n in zip(design.palette, design.counts, strict=True)
+        if n and (c.brand, c.code) not in known
+    ]
+    if unresolved:
+        raise StitchPressError("线号尚未在当前目录解析，请先修正：" + ", ".join(unresolved[:10]))
+
+
 @dataclass(frozen=True)
 class ReviewRecord:
     target_sha: str

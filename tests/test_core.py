@@ -5,7 +5,12 @@ import pytest
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import safe_filename, symbol_key
 from stitchpress.core.layout import Fabric, page_coordinates, page_plan, physical_layout
-from stitchpress.core.models import PatchCell, ReviewRecord, apply_patch
+from stitchpress.core.models import (
+    PatchCell,
+    ReviewRecord,
+    apply_patch,
+    validate_catalog_membership,
+)
 from stitchpress.core.resources import assign_symbols, demo_library
 
 
@@ -16,6 +21,14 @@ def test_s01_integer_counts_and_blank(minimal):
         replace(minimal, labels=((0, -2, 1), (1, 0, 0)))
     with pytest.raises(StitchPressError, match="全针"):
         replace(minimal, stitch_type="backstitch")
+
+
+def test_unknown_thread_is_not_resolved_by_matching_rgb(minimal):
+    validate_catalog_membership(minimal, minimal.palette)
+    catalog = (minimal.palette[0], replace(minimal.palette[1], code="different-same-RGB"))
+    with pytest.raises(StitchPressError, match="尚未"):
+        validate_catalog_membership(minimal, catalog)
+    assert minimal.palette[1].code == "3865"
 
 
 def test_s02_customer_size_and_global_phase():

@@ -94,7 +94,7 @@ def execute(args):
     elif args.command == "export":
         from .app.export import export_package
         from .core.layout import Fabric
-        from .core.resources import assign_symbols, library_from_assets
+        from .core.resources import assign_symbols, library_from_assets, load_catalog
 
         project = Project.decode(args.project.read_bytes())
         design = Design.from_dict(project.entities["design"])
@@ -104,6 +104,8 @@ def execute(args):
         if review_data:
             review_data["detail_regions"] = tuple(tuple(r) for r in review_data["detail_regions"])
         review = ReviewRecord(**review_data) if review_data else None
+        catalog_record = project.entities.get("catalog")
+        catalog = load_catalog(project.assets[catalog_record["asset"]]) if catalog_record else ()
         result = export_package(
             design=design,
             library=library,
@@ -114,6 +116,7 @@ def execute(args):
             destination=args.destination,
             work=args.work,
             review=review,
+            catalog=catalog,
             demo=args.demo,
             cancel=lambda: bool(args.cancel_file and args.cancel_file.exists()),
             progress=lambda event: print(json.dumps(event), flush=True),
