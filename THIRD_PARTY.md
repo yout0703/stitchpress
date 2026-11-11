@@ -11,6 +11,8 @@
 
 PySide6/Qt、Pillow/LittleCMS/libtiff、NumPy、pypdf、openpyxl、defusedxml、keyring均为运行依赖；PyInstaller为当前Mac构建工具、Nuitka为保留试验工具，pytest/pytest-qt/ruff/PDFium为开发检查工具。源码中不附带参考EXE的程序或美术资源。
 
+2026-11-11新增QtAwesome/QtPy，用于高DPI图标；界面使用其Material Design Icons 6线性图标。QtAwesome/QtPy的许可及随库图标字体通知需随安装资源保留；构建脚本显式收集QtAwesome数据。界面字体使用操作系统已安装的PingFang SC / Segoe UI及中文回退，不复制系统字体。
+
 Qt 6.12部署配置指定的Nuitka 4.1.1已做试验，但未通过中文安装目录迁移验证；Mac当前改用PyInstaller 6.22.3。其他平台仍需各自构建和验收。仓库中的构建脚本不构成商用发行许可检查完成的声明。
 
 ## 客户资源

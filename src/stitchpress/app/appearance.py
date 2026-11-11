@@ -1,0 +1,156 @@
+"""Shared desktop tokens. Appearance never changes design or production colors."""
+
+import sys
+from string import Template
+
+import qtawesome as qta
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QAbstractButton, QApplication
+
+THEMES = {
+    "dark": {
+        "bg": "#141a20",
+        "panel": "#1c232a",
+        "raised": "#242d35",
+        "canvas": "#10161c",
+        "line": "#35414b",
+        "text": "#eef3f6",
+        "muted": "#acb8c2",
+        "disabled": "#75828e",
+        "accent": "#86deca",
+        "accent_hover": "#a3eadb",
+        "accent_text": "#102d28",
+        "selected": "#263e3c",
+        "hover": "#2c3741",
+    },
+    "light": {
+        "bg": "#eef2f4",
+        "panel": "#ffffff",
+        "raised": "#f5f8f9",
+        "canvas": "#e2e8eb",
+        "line": "#ccd5db",
+        "text": "#1b2933",
+        "muted": "#536571",
+        "disabled": "#7b8993",
+        "accent": "#176956",
+        "accent_hover": "#105844",
+        "accent_text": "#ffffff",
+        "selected": "#e0f0eb",
+        "hover": "#eaf0f2",
+    },
+}
+
+
+def themed_icon(name, theme, *, primary=False):
+    tokens = THEMES[theme]
+    return qta.icon(
+        name,
+        color=tokens["accent_text"] if primary else tokens["text"],
+        color_disabled=tokens["disabled"],
+        color_on=tokens["accent"],
+    )
+
+
+def bind_icon(widget, name):
+    widget.setProperty("iconName", name)
+    widget.setIconSize(QSize(19, 19))
+
+
+def apply_appearance(app: QApplication, root, theme):
+    t = THEMES[theme]
+    app.setStyle("Fusion")
+    font = QFont("PingFang SC" if sys.platform == "darwin" else "Segoe UI", 10)
+    font.setFamilies([font.family(), "Microsoft YaHei UI", "Noto Sans CJK SC", "sans-serif"])
+    app.setFont(font)
+    # Use a complete stylesheet rather than combining QPalette overrides with QSS.
+    app.setStyleSheet(
+        Template("""
+        QWidget { color: $text; font-size: 13px; selection-background-color: $selected;
+                  selection-color: $text; }
+        QMainWindow, QDialog, QStackedWidget { background: $bg; }
+        QFrame#documentHeader, QFrame#viewToolbar, QFrame#palettePanel,
+        QFrame#selectionDock, QFrame#inspector, QFrame#pageCard { background: $panel; }
+        QFrame#documentHeader { border-bottom: 1px solid $line; }
+        QFrame#viewToolbar { border-bottom: 1px solid $line; }
+        QFrame#palettePanel { border-right: 1px solid $line; }
+        QFrame#inspector { border-left: 1px solid $line; }
+        QFrame#masterPanel, QFrame#sourcePanel { background: $canvas; }
+        QFrame#selectionDock { border: 1px solid $line; border-radius: 10px; }
+        QFrame#pageCard { border: 1px solid $line; border-radius: 10px; }
+        QLabel { background: transparent; border: none; }
+        QLabel[role="brand"] { font-size: 19px; font-weight: 650; }
+        QLabel[role="document"] { font-size: 15px; font-weight: 600; }
+        QLabel[role="heading"] { font-size: 19px; font-weight: 600; }
+        QLabel[role="pageTitle"] { font-size: 25px; font-weight: 650; }
+        QLabel[role="muted"] { color: $muted; }
+        QLabel[role="badge"] { color: $accent; background: $selected;
+            border-radius: 5px; padding: 5px 9px; font-size: 12px; }
+        QPushButton, QToolButton { background: transparent; border: 1px solid $line;
+            border-radius: 6px; padding: 7px 11px; min-height: 20px; }
+        QPushButton:hover, QToolButton:hover { background: $hover; }
+        QPushButton:pressed, QToolButton:pressed { background: $selected; }
+        QPushButton:checked, QToolButton:checked { background: $selected;
+            color: $accent; border-color: $accent; }
+        QPushButton[role="primary"] { background: $accent; color: $accent_text;
+            border-color: $accent; font-weight: 600; }
+        QPushButton[role="primary"]:hover { background: $accent_hover; }
+        QPushButton[role="outline"] { color: $accent; border-color: $accent; }
+        QPushButton[role="quiet"], QToolButton[role="quiet"] { border-color: transparent; }
+        QPushButton[role="icon"] { padding: 6px; min-width: 23px; }
+        QPushButton:disabled, QToolButton:disabled { color: $disabled;
+            background: $raised; border-color: $line; }
+        QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus,
+        QSpinBox:focus, QTextEdit:focus, QTableWidget:focus { border: 1px solid $accent; }
+        QLineEdit, QComboBox, QSpinBox, QTextEdit { background: $raised;
+            color: $text; border: 1px solid $line; border-radius: 5px;
+            padding: 7px; min-height: 19px; }
+        QLineEdit, QTextEdit { placeholder-text-color: $muted; }
+        QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { color: $disabled; }
+        QComboBox { padding-right: 22px; }
+        QComboBox::drop-down { width: 21px; border: none; }
+        QComboBox QAbstractItemView { background: $panel; color: $text;
+            selection-background-color: $selected; selection-color: $text;
+            border: 1px solid $line; }
+        QSpinBox::up-button, QSpinBox::down-button { width: 17px; }
+        QCheckBox { spacing: 8px; padding: 5px 0; }
+        QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;
+            border: 1px solid $muted; background: $raised; }
+        QCheckBox::indicator:checked { background: $accent; border: 4px solid $panel; }
+        QTableWidget { background: $panel; alternate-background-color: $raised;
+            border: none; gridline-color: $line; outline: none; }
+        QTableWidget::item { padding: 4px; border-bottom: 1px solid $line; }
+        QTableWidget::item:selected { background: $selected; color: $text; }
+        QHeaderView::section { background: $panel; color: $muted;
+            padding: 7px 4px; border: none; font-size: 11px; }
+        QTableCornerButton::section { background: $panel; border: none; }
+        QGraphicsView { background: $canvas; border: none; }
+        QScrollArea { background: transparent; border: none; }
+        QScrollArea > QWidget > QWidget { background: $panel; }
+        QScrollBar:vertical { background: transparent; width: 9px; margin: 0; }
+        QScrollBar:horizontal { background: transparent; height: 9px; margin: 0; }
+        QScrollBar::handle { background: $disabled; border-radius: 4px; min-height: 28px;
+            min-width: 28px; }
+        QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+        QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+        QSplitter::handle { background: $line; width: 1px; }
+        QGroupBox { border: 1px solid $line; border-radius: 6px;
+            margin-top: 18px; padding: 14px 10px 10px; font-weight: 600; }
+        QGroupBox::title { subcontrol-origin: margin; left: 12px; }
+        QMenu, QMenuBar { background: $panel; color: $text;
+            border: 1px solid $line; padding: 5px; }
+        QMenu::item { padding: 9px 20px; border-radius: 4px; }
+        QMenu::item:selected { background: $selected; color: $accent; }
+        QToolButton::menu-indicator { width: 7px; }
+        QTabWidget::pane { border: 1px solid $line; background: $panel; }
+        QTabBar::tab { background: $raised; color: $muted; padding: 10px 16px; }
+        QTabBar::tab:selected { background: $selected; color: $accent; }
+        QStatusBar { background: $bg; color: $muted; font-size: 11px; }
+        QStatusBar::item { border: none; }
+        QToolTip { background: $raised; color: $text; border: 1px solid $line;
+            padding: 6px; }
+        """).substitute(t)
+    )
+    for button in root.findChildren(QAbstractButton):
+        if name := button.property("iconName"):
+            button.setIcon(themed_icon(name, theme, primary=button.property("role") == "primary"))

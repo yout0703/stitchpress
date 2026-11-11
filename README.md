@@ -18,6 +18,8 @@ uv run --group build python tools/build_desktop.py
 
 Mac本机通过PyInstaller构建，试用应用生成于 `dist/macos/StitchPress.app`。开发样本和检查留底在 `reports/local/`；安装包及客户资源不推送到Git。
 
+界面已采用专业制版台布局：左侧常驻线色与符号，中间画布，底部局部修订，规格与转换按需展开。右上角可切换白天/夜间主题并记住本机选择；主题不修改母版或导出颜色。设计及验证范围见[桌面界面与双主题](docs/13-桌面界面与双主题.md)和[视觉验收](design-qa.md)。
+
 使用环境补充（2026-11-11）：客户目前只有Windows；我们主要在macOS开发调试。因此以Windows为客户交付与体验验收主平台，macOS版本用于日常开发、调试和跨端核对，保留此前两个平台可运行版本的目标。客户尚未提出macOS商业使用需求。
 
 **开发入口：[TODO.md](TODO.md)**。按技术验证→本地制包→AI制版→Windows客户内测→完整R1推进；任务依赖、退出条件、外部待办和完成证据都在这份清单维护。先验证PySide6，明确未满足项后再启用Tauri对照。

@@ -7,34 +7,26 @@ from pathlib import Path
 from uuid import uuid4
 
 from PIL.ImageQt import ImageQt
-from PySide6.QtCore import QProcess, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtCore import QProcess, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QGraphicsScene,
     QGraphicsView,
-    QGroupBox,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSpinBox,
-    QSplitter,
-    QTableWidget,
     QTableWidgetItem,
     QTabWidget,
-    QTextEdit,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -53,12 +45,15 @@ from stitchpress.platform.launch import worker_arguments, worker_program
 from stitchpress.platform.settings import load_settings, save_secret, save_settings, settings_dir
 
 from .ai import ImageServiceProfile, ServiceProfile
+from .appearance import THEMES, apply_appearance
 from .fixtures import demo_project
 from .store import Coordinator, Project
+from .workspace import build_workspace
 
 
 class Canvas(QGraphicsView):
     region_selected = Signal(QRectF)
+    zoom_changed = Signal(float)
 
     def __init__(self):
         super().__init__()
@@ -68,30 +63,66 @@ class Canvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._start = None
         self.selection_item = None
+        self._selection = None
+        self._auto_fit = True
+        self.selection_color = "#86deca"
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def set_image(self, image, fit=False):
+        old_rect = self.sceneRect()
         self.scene().clear()
         self.selection_item = None
         self.scene().addPixmap(QPixmap.fromImage(ImageQt(image)))
         self.setSceneRect(QRectF(0, 0, image.width, image.height))
-        if fit:
+        if old_rect != self.sceneRect():
+            self._selection = None
+        self.draw_selection(self._selection)
+        if fit or self._auto_fit:
             self.fit()
 
     def fit(self):
-        self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._auto_fit = True
+        if not self.sceneRect().isEmpty():
+            self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            self.zoom_changed.emit(self.transform().m11() * 100)
+
+    def zoom(self, factor):
+        self._auto_fit = False
+        current = self.transform().m11()
+        target = max(0.03, min(30, current * factor))
+        self.scale(target / current, target / current)
+        self.zoom_changed.emit(self.transform().m11() * 100)
+
+    def actual_pixels(self):
+        self._auto_fit = False
+        self.resetTransform()
+        self.zoom_changed.emit(100)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._auto_fit:
+            self.fit()
 
     def wheelEvent(self, event):
-        if (
-            0.03 < self.transform().m11() < 30
-            or (self.transform().m11() <= 0.03 and event.angleDelta().y() > 0)
-            or (self.transform().m11() >= 30 and event.angleDelta().y() < 0)
-        ):
-            factor = 1.2 if event.angleDelta().y() > 0 else 1 / 1.2
-            self.scale(factor, factor)
+        self.zoom(1.2 if event.angleDelta().y() > 0 else 1 / 1.2)
         event.accept()
 
+    def draw_selection(self, rect):
+        if self.selection_item is not None:
+            self.scene().removeItem(self.selection_item)
+            self.selection_item = None
+        self._selection = rect
+        if rect is not None:
+            pen = QPen(QColor(self.selection_color), 2)
+            pen.setCosmetic(True)
+            self.selection_item = self.scene().addRect(rect, pen)
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.dragMode() == QGraphicsView.DragMode.RubberBandDrag
+        ):
             self._start = self.mapToScene(event.position().toPoint())
         super().mousePressEvent(event)
 
@@ -103,11 +134,7 @@ class Canvas(QGraphicsView):
             self._start = None
             if rect.width() > 2 and rect.height() > 2:
                 self.region_selected.emit(rect)
-                if self.selection_item:
-                    self.scene().removeItem(self.selection_item)
-                pen = QPen(QColor("#df763b"), 2)
-                pen.setCosmetic(True)
-                self.selection_item = self.scene().addRect(rect, pen)
+                self.draw_selection(rect)
 
 
 class AISettings(QDialog):
@@ -221,7 +248,10 @@ class Workbench(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("StitchPress · 绣印工坊 · 开发试验版")
-        self.resize(1320, 860)
+        self.resize(1440, 1024)
+        self.setMinimumSize(1100, 720)
+        chosen_theme = load_settings().get("appearance", {}).get("theme", "dark")
+        self.theme = chosen_theme if chosen_theme in THEMES else "dark"
         self.coordinator = None
         self.project_path = None
         self.draft = demo_project()
@@ -235,160 +265,85 @@ class Workbench(QMainWindow):
         self.history = []
         self._refreshing = False
         self.build_ui()
+        self.set_theme(self.theme, persist=False)
         self.refresh(fit=True)
 
     def build_ui(self):
-        toolbar = QToolBar("文件与视图")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        actions = [
-            ("新建示例", self.new_demo, QKeySequence.StandardKey.New),
-            ("打开作品", self.open_project, QKeySequence.StandardKey.Open),
-            ("保存", self.save, QKeySequence.StandardKey.Save),
-            ("另存", self.save_as, QKeySequence.StandardKey.SaveAs),
-            ("导入 XSD / OXS / JSON", self.import_design, None),
-            ("客户资源", self.import_resources, None),
-            ("AI 配置", self.ai_settings, None),
-        ]
-        for text, callback, shortcut in actions:
-            action = QAction(text, self)
-            if shortcut:
-                action.setShortcut(shortcut)
-            action.triggered.connect(callback)
-            toolbar.addAction(action)
-        splitter = QSplitter()
-        self.setCentralWidget(splitter)
-        panel = QWidget()
-        panel.setMinimumWidth(300)
-        panel.setMaximumWidth(390)
-        pl = QVBoxLayout(panel)
-        pl.addWidget(QLabel("STITCHPRESS  /  作品工作台"))
-        self.title_edit, self.code_edit = QLineEdit(), QLineEdit()
-        form = QFormLayout()
-        form.addRow("作品名称", self.title_edit)
-        form.addRow("客户货号", self.code_edit)
-        self.sx, self.sy = QLineEdit("0.181"), QLineEdit("0.181")
-        form.addRow("横向格距 cm", self.sx)
-        form.addRow("纵向格距 cm", self.sy)
-        self.margins = {key: QLineEdit("5.430") for key in ("left", "top", "right", "bottom")}
-        for label, key in (
-            ("左留白 cm", "left"),
-            ("上留白 cm", "top"),
-            ("右留白 cm", "right"),
-            ("下留白 cm", "bottom"),
-        ):
-            form.addRow(label, self.margins[key])
-        pl.addLayout(form)
-        self.summary = QLabel()
-        self.summary.setWordWrap(True)
-        pl.addWidget(self.summary)
-        for widget in (self.title_edit, self.code_edit, self.sx, self.sy, *self.margins.values()):
-            widget.editingFinished.connect(self.apply_fields)
-        source_box = QGroupBox("图片 → 针格候选")
-        sf = QFormLayout(source_box)
-        self.grid_w, self.grid_h, self.color_limit = QSpinBox(), QSpinBox(), QSpinBox()
-        for widget, value, limit in (
-            (self.grid_w, 160, 1000),
-            (self.grid_h, 160, 1000),
-            (self.color_limit, 32, 66),
-        ):
-            widget.setRange(1, limit)
-            widget.setValue(value)
-        sf.addRow("针格宽", self.grid_w)
-        sf.addRow("针格高", self.grid_h)
-        sf.addRow("最多颜色", self.color_limit)
-        self.alpha = QComboBox()
-        self.alpha.addItems(["alpha <128 留空", "合成白底 / 全部有针"])
-        self.alpha.setToolTip("阈值处理透明边缘；不把不透明白色当作空白。合成白底模式全格有针。")
-        sf.addRow("半透明处理", self.alpha)
-        self.source_label = QLabel("尚未选择蓝图；干净平面图可直接转换")
-        self.source_label.setWordWrap(True)
-        sf.addRow(self.source_label)
-        sf.addRow(self.button("选择图片", self.choose_image))
-        sf.addRow(self.button("本地转换候选", self.convert))
-        pl.addWidget(source_box)
-        local = QGroupBox("局部审查与修订")
-        ll = QVBoxLayout(local)
-        self.region_label = QLabel("在图上拖动选择针格区域")
-        self.region_label.setWordWrap(True)
-        ll.addWidget(self.region_label)
-        self.patch_color = QComboBox()
-        ll.addWidget(self.patch_color)
-        ll.addWidget(self.button("将选区改为此线色", self.patch_region))
-        ll.addWidget(self.button("撤销上次局部修订", self.undo_patch))
-        ll.addWidget(self.button("审核并冻结母版", self.freeze))
-        pl.addWidget(local)
-        pl.addStretch()
-        sidebar = QScrollArea()
-        sidebar.setWidgetResizable(True)
-        sidebar.setWidget(panel)
-        sidebar.setMinimumWidth(310)
-        sidebar.setMaximumWidth(410)
-        splitter.addWidget(sidebar)
-        self.tabs = QTabWidget()
-        splitter.addWidget(self.tabs)
-        center = QWidget()
-        cl = QVBoxLayout(center)
-        controls = QHBoxLayout()
-        controls.addWidget(QLabel("X 针格模拟 · 3:4 · 非实绣照片"))
-        self.canvas = Canvas()
-        self.canvas.region_selected.connect(self.select_region)
-        controls.addStretch()
-        controls.addWidget(self.button("适应窗口", self.canvas.fit))
-        controls.addWidget(self.button("100% 像素", self.actual_pixels))
-        cl.addLayout(controls)
-        cl.addWidget(self.canvas)
-        self.tabs.addTab(center, "母版预览")
-        self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["No.", "线号", "线色", "针数", "符号 ID"])
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setIconSize(QSize(32, 32))
-        self.table.itemSelectionChanged.connect(self.highlight)
-        symbols_tab = QWidget()
-        sl = QVBoxLayout(symbols_tab)
-        sl.addWidget(self.table)
-        sl.addWidget(self.button("调整选中线色的符号 / 事务交换", self.change_symbol))
-        self.tabs.addTab(symbols_tab, "线色与符号")
-        self.source_canvas = Canvas()
-        self.tabs.addTab(self.source_canvas, "对照原图")
-        ai_tab = QWidget()
-        al = QVBoxLayout(ai_tab)
-        al.addWidget(QLabel("DeepSeek Flash：文字/图片需求分析（点击后会调用你配置的API账号）"))
-        self.prompt = QTextEdit()
-        self.prompt.setPlaceholderText("描述必须保留的对象、构图、负空间和允许简化的部分……")
-        self.prompt.setMaximumHeight(160)
-        al.addWidget(self.prompt)
-        self.ai_include_image = QCheckBox("本次附带当前对照图片，发送到已配置的AI服务")
-        self.ai_include_image.setChecked(True)
-        al.addWidget(self.ai_include_image)
-        al.addWidget(self.button("分析设计要求 · 单次调用 · 费用以服务账单为准", self.run_ai))
-        self.ai_result = QTextEdit()
-        self.ai_result.setReadOnly(True)
-        self.ai_result.setPlaceholderText("尚未配置/调用。模型建议不会自动改针格或冻结母版。")
-        al.addWidget(self.ai_result)
-        self.tabs.addTab(ai_tab, "AI 制版助手")
-        export_tab = QWidget()
-        el = QVBoxLayout(export_tab)
-        note = QLabel(
-            "整包：生产TIFF + N张A4查图 + PDF + 配线Excel + X模拟 + 中英文说明。\n"
-            "示例库只供演示。正式导出需要客户资源及当前母版审核记录。\n"
-            "当前未完成Windows和工厂验证；PDF外部渲染/Excel实机结果分别登记。"
+        build_workspace(self, Canvas)
+
+    def set_theme(self, name, *, persist=True):
+        if name not in THEMES:
+            return
+        self.theme = name
+        self.theme_button.setText("白天" if name == "dark" else "夜间")
+        self.theme_button.setProperty(
+            "iconName", "mdi6.white-balance-sunny" if name == "dark" else "mdi6.weather-night"
         )
-        note.setWordWrap(True)
-        el.addWidget(note)
-        self.demo_mode = QCheckBox("演示模式（不能作为正式生产验收）")
-        self.demo_mode.setChecked(True)
-        el.addWidget(self.demo_mode)
-        el.addWidget(self.button("导出 N+6 整包", self.export))
-        el.addWidget(self.button("取消当前本地任务", self.cancel_job))
-        self.log = QTextEdit()
-        self.log.setReadOnly(True)
-        el.addWidget(self.log)
-        self.tabs.addTab(export_tab, "导出与任务")
-        splitter.setSizes([330, 990])
-        self.statusBar().showMessage("开发试验版 · 示例不含客户私有素材 · 尚未经过生产验收")
+        apply_appearance(QApplication.instance(), self, name)
+        for canvas in (self.canvas, self.source_canvas):
+            canvas.selection_color = THEMES[name]["accent"]
+            canvas.draw_selection(canvas._selection)
+        if persist:
+            try:
+                settings = load_settings()
+                settings.setdefault("appearance", {})["theme"] = name
+                save_settings(settings)
+            except Exception as exc:
+                self.error(exc)
+
+    def toggle_theme(self):
+        self.set_theme("light" if self.theme == "dark" else "dark")
+
+    def show_page(self, index):
+        self.pages.setCurrentIndex(index)
+        self.workbench_nav.setChecked(index == 0)
+        self.ai_nav.setChecked(index == 1)
+        self.export_nav.setChecked(index == 2)
+        self.view_controls.setVisible(index == 0)
+
+    def set_canvas_tool(self, pan):
+        self.canvas.setDragMode(
+            QGraphicsView.DragMode.ScrollHandDrag if pan else QGraphicsView.DragMode.RubberBandDrag
+        )
+
+    def toggle_source(self):
+        self.source_panel.setVisible(self.compare_button.isChecked())
+        self.canvas_splitter.setSizes([1, 1])
+        QTimer.singleShot(0, self.source_canvas.fit)
+
+    def toggle_inspector(self):
+        visible = self.inspector.isHidden()
+        self.inspector.setVisible(visible)
+        self.inspector_button.blockSignals(True)
+        self.inspector_button.setChecked(visible)
+        self.inspector_button.blockSignals(False)
+        if visible:
+            self.workspace_splitter.setSizes([290, max(300, self.width() - 610), 320])
+
+    def filter_palette(self):
+        query = self.palette_search.text().strip().casefold()
+        visible = 0
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 1)
+            match = not query or query in item.toolTip().casefold()
+            self.table.setRowHidden(row, not match)
+            visible += match
+        self.palette_count.setText(
+            f"共 {self.table.rowCount()} 色"
+            if not query
+            else f"找到 {visible} / {self.table.rowCount()} 色"
+        )
+
+    def clear_highlight(self):
+        self.table.clearSelection()
+
+    def update_document_state(self):
+        metadata = self.draft.entities["metadata"]
+        title = f"{metadata['title']} / {metadata['code']}"
+        self.document_title.setText(title)
+        self.document_title.setToolTip(title)
+        state = "有未保存修改" if self.dirty else "已保存" if self.project_path else "示例 · 未保存"
+        self.document_state.setText(state)
 
     @staticmethod
     def button(text, callback):
@@ -450,35 +405,73 @@ class Workbench(QMainWindow):
                 f"生产 {physical.canvas_px[0]} × {physical.canvas_px[1]} px\n"
                 + ("已记录母版审核" if self.draft.entities.get("freeze") else "待审查/冻结")
             )
-            self.canvas.set_image(stitch_preview(design), fit=fit)
+            self.metrics.setText(
+                f"{design.width} × {design.height} 格   |   {len(mapping)} 色   |   "
+                f"{physical.width_cm} × {physical.height_cm} cm"
+            )
+            self.metrics.setToolTip(f"实际格距 {fabric.sx} × {fabric.sy} cm / 格")
+            self.export_summary.setText(
+                f"{metadata['title']} / {metadata['code']}\n"
+                f"{design.width} × {design.height} 格 · "
+                f"{sum(design.counts):,} 针 · {len(mapping)} 色\n"
+                f"画心 {physical.width_cm} × {physical.height_cm} cm · "
+                f"生产 {physical.canvas_px[0]} × {physical.canvas_px[1]} px"
+            )
+            self.export_review.setText(
+                "已记录当前母版审核" if self.draft.entities.get("freeze") else "待审查与冻结"
+            )
+            self.update_document_state()
+            selected_items = self.table.selectedItems()
+            selected_index = (
+                selected_items[0].data(Qt.ItemDataRole.UserRole) if selected_items else None
+            )
+            self.canvas.set_image(stitch_preview(design, highlight=selected_index), fit=fit)
+            patch_index = self.patch_color.currentData()
             self.table.setRowCount(0)
             self.patch_color.clear()
-            self.patch_color.addItem("无针 / 留空", -1)
+            self.patch_color.addItem("留空（不绣）", -1)
+            counts = design.counts
             for i, color in enumerate(design.palette):
-                self.patch_color.addItem(f"{color.brand} {color.code}", i)
-                if not design.counts[i]:
+                self.patch_color.addItem(f"{color.brand} {color.code}  {color.name}", i)
+                if not counts[i]:
                     continue
                 row = self.table.rowCount()
                 self.table.insertRow(row)
                 for col, value in enumerate(
-                    (row + 1, color.code, "●", design.counts[i], mapping[color.key])
+                    ("", f"{color.brand} {color.code}", f"{counts[i]:,}", "")
                 ):
-                    item = QTableWidgetItem(str(value))
+                    item = QTableWidgetItem(value)
                     item.setData(Qt.ItemDataRole.UserRole, i)
+                    item.setToolTip(f"{color.brand} {color.code} · {color.name} · {counts[i]:,} 针")
+                    if col == 0:
+                        chip = QPixmap(24, 24)
+                        chip.fill(QColor(*color.rgb))
+                        item.setIcon(QIcon(chip))
                     if col == 2:
-                        item.setForeground(QColor(*color.rgb))
-                    if col == 4:
+                        item.setTextAlignment(
+                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                        )
+                    if col == 3:
                         symbol = library.by_key[mapping[color.key]]
                         rgb = screen_rgb(symbol.image(), library.icc)
                         item.setIcon(QIcon(QPixmap.fromImage(ImageQt(rgb))))
+                        item.setToolTip(f"{color.brand} {color.code} · 符号 {symbol.key}")
                     self.table.setItem(row, col, item)
-                self.table.setRowHeight(row, 44)
-            self.table.resizeColumnsToContents()
+                self.table.setRowHeight(row, 42)
+                if i == selected_index:
+                    self.table.selectRow(row)
+            if patch_index is not None:
+                self.patch_color.setCurrentIndex(max(0, self.patch_color.findData(patch_index)))
+            self.patch_button.setEnabled(self.region is not None)
+            self.patch_color.setEnabled(self.region is not None)
+            self.undo_button.setEnabled(bool(self.history))
+            self.symbol_button.setEnabled(bool(self.table.selectedItems()))
+            self.filter_palette()
         finally:
             self._refreshing = False
 
     def actual_pixels(self):
-        self.canvas.resetTransform()
+        self.canvas.actual_pixels()
 
     def change_symbol(self):
         selected = self.table.selectedItems()
@@ -523,6 +516,9 @@ class Workbench(QMainWindow):
         selected = self.table.selectedItems()
         color = selected[0].data(Qt.ItemDataRole.UserRole) if selected else None
         self.canvas.set_image(stitch_preview(self.design, highlight=color))
+        self.symbol_button.setEnabled(color is not None)
+        if color is not None:
+            self.patch_color.setCurrentIndex(self.patch_color.findData(color))
 
     def select_region(self, rect):
         design = self.design
@@ -539,9 +535,16 @@ class Workbench(QMainWindow):
             if region not in self.review_regions:
                 self.review_regions.append(region)
             self.region_label.setText(
-                f"列 {region[0] + 1}–{region[2]} / 行 {region[1] + 1}–{region[3]}\n"
-                f"已查看 {len(self.review_regions)} 处不同局部"
+                f"{region[2] - region[0]} × {region[3] - region[1]} 格 · "
+                f"已查看 {len(self.review_regions)} 处局部"
             )
+            self.patch_color.setEnabled(True)
+            self.patch_button.setEnabled(True)
+        else:
+            self.region = None
+            self.region_label.setText("选区未覆盖针格，请在母版内重新框选")
+            self.patch_color.setEnabled(False)
+            self.patch_button.setEnabled(False)
 
     def patch_region(self):
         try:
@@ -581,6 +584,9 @@ class Workbench(QMainWindow):
             self.draft.entities["mapping"] = previous["mapping"]
             self.draft.entities["freeze"] = previous["freeze"]
             self.review_regions = []
+            self.region = None
+            self.canvas.draw_selection(None)
+            self.region_label.setText("拖动框选针格，检查关键局部")
             self.dirty = True
             self.refresh()
 
@@ -600,7 +606,9 @@ class Workbench(QMainWindow):
         self.draft.entities["mapping"] = mapping
         self.draft.entities.pop("freeze", None)
         self.region, self.review_regions = None, []
-        self.region_label.setText("在图上拖动选择针格区域")
+        self.region_label.setText("拖动框选针格，检查关键局部")
+        self.canvas.draw_selection(None)
+        self.table.clearSelection()
         self.dirty = True
         self.refresh(fit=True)
 
@@ -675,8 +683,13 @@ class Workbench(QMainWindow):
         self.draft = copy.deepcopy(project)
         self.baseline = copy.deepcopy(project)
         self.region, self.review_regions, self.history = None, [], []
+        self.canvas.draw_selection(None)
+        self.region_label.setText("拖动框选针格，检查关键局部")
+        self.table.clearSelection()
         self.source_image = None
         self.source_canvas.scene().clear()
+        self.source_canvas.hide()
+        self.source_empty.show()
         self.source_label.setText("尚未选择蓝图；干净平面图可直接转换")
         source = self.draft.entities.get("source")
         if source:
@@ -735,6 +748,7 @@ class Workbench(QMainWindow):
             self.baseline = copy.deepcopy(result)
             self.draft = copy.deepcopy(result)
             self.dirty = False
+            self.update_document_state()
             self.statusBar().showMessage(f"已保存 · 提交 {result.commit_seq}")
             return True
         except Exception as exc:
@@ -830,6 +844,9 @@ class Workbench(QMainWindow):
             self.draft.entities["source"] = {"asset": name, "role": "unreviewed-input"}
             self.source_label.setText(Path(path).name + "\n直接转换仅适合干净蓝图，需人工审核")
             self.dirty = True
+            self.update_document_state()
+            self.compare_button.setChecked(True)
+            self.toggle_source()
 
     def display_source(self, data):
         from PIL import Image
@@ -838,6 +855,8 @@ class Workbench(QMainWindow):
         display = Image.new("RGBA", normalized.size, "white")
         display.alpha_composite(normalized)
         display.thumbnail((4096, 4096))
+        self.source_empty.hide()
+        self.source_canvas.show()
         self.source_canvas.set_image(display.convert("RGB"), fit=True)
 
     def ai_settings(self):
@@ -877,6 +896,7 @@ class Workbench(QMainWindow):
         self.process.errorOccurred.connect(self.worker_error)
         self.process.readyReadStandardError.connect(self.read_stderr)
         self.process.start()
+        self.cancel_button.setEnabled(True)
         self.statusBar().showMessage("后台任务运行中；结果不会自动覆盖其他分支")
 
     def convert(self):
@@ -929,9 +949,11 @@ class Workbench(QMainWindow):
 
     def worker_error(self, error):
         self.log.append(f"后台任务未启动或异常退出：{self.process.errorString()}")
+        self.cancel_button.setEnabled(False)
         self.statusBar().showMessage("后台任务失败；原母版和已有完整交付未改变")
 
     def worker_finished(self, exit_code, exit_status):
+        self.cancel_button.setEnabled(False)
         job = self.job
         if not job:
             return
@@ -977,6 +999,7 @@ class Workbench(QMainWindow):
                 if answer == QMessageBox.StandardButton.Yes:
                     self.adopt_design(Design.from_dict(candidate["design"]))
             self.dirty = True
+            self.update_document_state()
             self.statusBar().showMessage("任务完成；候选/分析已保留，生产资格仍取决于母版审核")
         except Exception as exc:
             self.error(exc)
@@ -1022,6 +1045,7 @@ class Workbench(QMainWindow):
             self.process.errorOccurred.connect(self.worker_error)
             self.process.finished.connect(self.worker_finished)
             self.process.start()
+            self.cancel_button.setEnabled(True)
             self.log.append(f"开始导出：{destination}")
             atomic_write(
                 folder / "launch.json",
@@ -1064,23 +1088,6 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("StitchPress")
     app.setOrganizationName("StitchPress")
-    app.setStyle("Fusion")
-    app.setStyleSheet("""
-        QMainWindow, QWidget { background: #f5f3ef; color: #25392f; }
-        QToolBar { spacing: 9px; padding: 9px; border-bottom: 1px solid #d5dbd3; }
-        QGroupBox { border: 1px solid #d3d9cf; border-radius: 7px; margin-top: 15px;
-                    padding: 12px 8px 8px; font-weight: 600; }
-        QGroupBox::title { subcontrol-origin: margin; left: 10px; }
-        QPushButton { background: #e5ece3; border: 1px solid #bccbb8; border-radius: 5px;
-                      padding: 7px 11px; }
-        QPushButton:hover { background: #d4e1d0; }
-        QLineEdit, QTextEdit, QSpinBox, QComboBox, QTableWidget { background: white;
-            border: 1px solid #cbd4c6; border-radius: 4px; padding: 4px; }
-        QTabBar::tab { padding: 10px 18px; }
-        QTabBar::tab:selected { background: #dce8d7; }
-        QGraphicsView { background: #e0e3db; border: none; }
-        QStatusBar { background: #e4ebe0; }
-    """)
     window = Workbench()
     window.show()
     QTimer.singleShot(0, window.canvas.fit)

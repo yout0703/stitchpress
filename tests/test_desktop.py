@@ -1,7 +1,9 @@
+import copy
 from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import QRectF
+from PySide6.QtWidgets import QGraphicsView
 
 from stitchpress.app.desktop import AISettings, Workbench
 from stitchpress.app.fixtures import sample_design
@@ -87,4 +89,108 @@ def test_rejected_large_candidate_does_not_replace_existing_master(qtbot):
     assert window.design.content_sha == original
     assert not window.history
     window.dirty = False
+    window.close()
+
+
+def test_theme_switch_preserves_master_selection_zoom_and_other_settings(qtbot, monkeypatch):
+    settings = {"ai_profile": {"model": "customer-model"}, "installation_id": "test-install"}
+    monkeypatch.setattr("stitchpress.app.desktop.load_settings", lambda: settings.copy())
+    saved = []
+    monkeypatch.setattr("stitchpress.app.desktop.save_settings", saved.append)
+    window = Workbench()
+    qtbot.addWidget(window)
+    window.show()
+    original = copy.deepcopy(window.draft)
+    window.select_region(QRectF(200, 300, 80, 80))
+    region = window.region
+    window.canvas.actual_pixels()
+    window.canvas.zoom(1.2)
+    zoom = window.canvas.transform().m11()
+    window.toggle_theme()
+    assert window.theme == "light"
+    assert saved[-1]["appearance"]["theme"] == "light"
+    assert saved[-1]["ai_profile"] == settings["ai_profile"]
+    assert saved[-1]["installation_id"] == "test-install"
+    assert window.draft.entities == original.entities
+    assert window.draft.assets == original.assets
+    assert window.region == region
+    assert window.canvas.transform().m11() == zoom
+    assert not window.dirty
+    window.close()
+
+
+def test_theme_preference_restores_and_invalid_preference_falls_back(qtbot, monkeypatch):
+    monkeypatch.setattr(
+        "stitchpress.app.desktop.load_settings", lambda: {"appearance": {"theme": "light"}}
+    )
+    window = Workbench()
+    qtbot.addWidget(window)
+    assert window.theme == "light"
+    window.close()
+    monkeypatch.setattr(
+        "stitchpress.app.desktop.load_settings", lambda: {"appearance": {"theme": "obsolete"}}
+    )
+    fallback = Workbench()
+    qtbot.addWidget(fallback)
+    assert fallback.theme == "dark"
+    fallback.close()
+
+
+def test_palette_search_highlight_and_navigation_keep_canvas_context(qtbot):
+    window = Workbench()
+    qtbot.addWidget(window)
+    window.show()
+    original = window.design.content_sha
+    first_color = window.design.palette[0]
+    window.palette_search.setText(first_color.code)
+    visible = [r for r in range(window.table.rowCount()) if not window.table.isRowHidden(r)]
+    assert visible
+    assert all(first_color.code in window.table.item(r, 1).toolTip() for r in visible)
+    window.table.selectRow(visible[0])
+    assert window.pages.currentIndex() == 0
+    assert window.canvas.isVisible()
+    assert window.symbol_button.isEnabled()
+    window.clear_highlight()
+    assert not window.symbol_button.isEnabled()
+    window.palette_search.setText("no-such-thread")
+    assert all(window.table.isRowHidden(r) for r in range(window.table.rowCount()))
+    window.show_page(1)
+    assert not window.view_controls.isVisible()
+    window.show_page(2)
+    assert window.export_nav.isChecked()
+    window.show_page(0)
+    assert window.view_controls.isVisible()
+    window.set_canvas_tool(True)
+    assert window.canvas.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
+    window.inspector_button.setChecked(True)
+    qtbot.waitUntil(lambda: window.inspector.width() >= 300)
+    assert window.title_edit.isVisible()
+    qtbot.waitUntil(lambda: window.inspector.horizontalScrollBar().maximum() == 0)
+    window.inspector_button.setChecked(False)
+    assert window.inspector.isHidden()
+    window.ai_nav.setChecked(True)
+    assert window.pages.currentIndex() == 1
+    window.export_nav.setChecked(True)
+    assert window.pages.currentIndex() == 2
+    window.workbench_nav.setChecked(True)
+    assert window.pages.currentIndex() == 0
+    assert window.design.content_sha == original
+    window.close()
+
+
+def test_project_change_clears_stale_selection_and_disables_patch(qtbot):
+    window = Workbench()
+    qtbot.addWidget(window)
+    window.show()
+    window.select_region(QRectF(200, 300, 80, 80))
+    assert window.patch_button.isEnabled()
+    window.select_region(QRectF(-1000, -1000, 10, 10))
+    assert window.region is None
+    assert not window.patch_button.isEnabled()
+    window.select_region(QRectF(200, 300, 80, 80))
+    window.set_project(window.baseline)
+    assert window.region is None
+    assert not window.patch_button.isEnabled()
+    assert not window.patch_color.isEnabled()
+    assert not window.undo_button.isEnabled()
     window.close()
