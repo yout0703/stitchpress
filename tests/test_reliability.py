@@ -184,3 +184,41 @@ def test_reading_overlap_cores_cover_exactly_once(minimal):
                 coverage[y][x] += 1
         assert page.visible[0] <= x0 and page.visible[1] <= y0
     assert all(v == 1 for row in coverage for v in row)
+
+
+def test_whole_reference_is_one_true_scale_page_with_all_stitches(minimal):
+    from stitchpress.app.export import export_plan
+    from stitchpress.core.configuration import ReferenceSettings
+
+    library = demo_library(2)
+    renderer, plan, estimate = export_plan(
+        minimal,
+        library,
+        assign_symbols(minimal, library),
+        Fabric(),
+        ReferenceSettings(paper="whole"),
+    )
+    assert len(plan.pages) == 1
+    assert plan.pages[0].core == (0, 0, minimal.width, minimal.height)
+    image, raster = renderer.reference(plan.pages[0], plan)
+    assert renderer.verify_cells(image, raster)["stitches"] == sum(minimal.counts)
+    assert not estimate["factory_reference_compatible"]
+    image.close()
+
+
+def test_counts_only_not_blocked_by_unrequested_production_geometry(tmp_path, minimal):
+    library = demo_library(2)
+    result = export_package(
+        design=minimal,
+        library=library,
+        mapping=assign_symbols(minimal, library),
+        fabric=Fabric(sx="100", sy="100"),
+        code="001",
+        title="counts",
+        review=None,
+        demo=True,
+        targets=frozenset({"counts"}),
+        destination=tmp_path / "counts",
+        work=tmp_path / "work",
+    )
+    assert result["files"] == 1

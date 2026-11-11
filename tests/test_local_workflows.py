@@ -190,3 +190,28 @@ def test_margin_units_use_actual_axis_pitch_and_preserve_unchanged_cm(qtbot, mon
     assert window.draft.entities["fabric"]["dpi"] == 300
     dialog.reject()
     window.close()
+
+
+def test_new_source_keeps_unprofiled_cmyk_original_and_drops_previous_input_override(
+    qtbot, monkeypatch
+):
+    window = Workbench()
+    monkeypatch.setattr(window, "confirm_discard", lambda: True)
+    qtbot.addWidget(window)
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), "red").save(buffer, "PNG")
+    window.import_source(buffer.getvalue(), "old.png")
+    icc = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    window.draft.assets["old.icc"] = icc
+    window.draft.entities["input_profile"] = {"asset": "old.icc"}
+    raw = io.BytesIO()
+    Image.new("CMYK", (4, 4), (0, 0, 0, 255)).save(raw, "TIFF")
+    window.import_source(raw.getvalue(), "new.tif")
+    assert window.source_image == raw.getvalue()
+    assert "input_profile" not in window.draft.entities
+    assert "等待修正输入ICC" in window.source_label.text()
+    assert window.draft.assets["old.icc"] == icc
+    assert any(k.startswith("input_profile:") for k in window.draft.entities)
+    Project = __import__("stitchpress.app.store", fromlist=["Project"]).Project
+    assert Project.decode(window.draft.encode()).entities["source"]["asset"].endswith(".tif")
+    window.close()

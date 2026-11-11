@@ -17,11 +17,12 @@ from pypdf.generic import (
 )
 
 from .errors import StitchPressError
+from .materials import MaterialRule, material_rows
 from .models import Design
 from .resources import natural_color_key
 
 
-def write_counts(design: Design, code: str, path: Path) -> dict:
+def write_counts(design: Design, code: str, path: Path, material_rules=()) -> dict:
     wb = Workbook()
     ws = wb.active
     ws.title = "Stitch Counts"
@@ -57,6 +58,69 @@ def write_counts(design: Design, code: str, path: Path) -> dict:
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     buffer = io.BytesIO()
+    material_checks = []
+    if len(material_rules) > 12:
+        raise StitchPressError("单次配线表最多12套客户规则")
+    for index, item in enumerate(material_rules, 1):
+        rule = MaterialRule(**item)
+        rows = material_rows(design, rule)
+        sheet = wb.create_sheet(f"Material {index:02}")
+        sheet.append(["Rule", rule.name, "CT", rule.nominal_ct, "Strands", rule.strands])
+        sheet.append(
+            [
+                "Stitches / work metre",
+                rule.stitches_per_work_metre,
+                "Loss %",
+                rule.loss_percent,
+                "Work metres / pack",
+                rule.pack_work_metres,
+            ]
+        )
+        sheet.append(["Source", rule.source_note, "Revision", rule.revision])
+        sheet.append(["Working metres refer to combined thread; raw metres count single strands."])
+        sheet.append(
+            [
+                "Brand",
+                "Code",
+                "Stitches",
+                "Base work m",
+                "With loss work m",
+                "Packages",
+                "Supplied work m",
+                "Raw single-strand m",
+            ]
+        )
+        for row in rows:
+            sheet.append(
+                [
+                    row["color"].brand,
+                    row["color"].code,
+                    row["stitches"],
+                    row["base_work_metres"],
+                    row["with_loss_work_metres"],
+                    row["packages"],
+                    row["supplied_work_metres"],
+                    row["raw_single_strand_metres"],
+                ]
+            )
+        for row in sheet:
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+                cell.font = Font(name="Calibri", size=14)
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+            sheet.row_dimensions[row[0].row].height = 32
+        for column in "ABCDEFGH":
+            sheet.column_dimensions[column].width = 24
+        sheet.freeze_panes = "A6"
+        material_checks.append(
+            {
+                "sheet": sheet.title,
+                "rule_sha": rule.revision,
+                "rows": len(rows),
+                "packages": sum(row["packages"] for row in rows),
+            }
+        )
     wb.save(buffer)
     # openpyxl does not calculate. Our evaluator supports ONLY the SUM we own,
     # computes from serialized integer cells, and writes its OOXML cached value.
@@ -93,12 +157,30 @@ def write_counts(design: Design, code: str, path: Path) -> dict:
             or actual.cell(row, 5).data_type != "n"
         ):
             raise StitchPressError("Excel逐色文本/整数针数核对失败")
+    for check, item in zip(material_checks, material_rules, strict=True):
+        sheet = results[check["sheet"]]
+        for index, row in enumerate(material_rows(design, MaterialRule(**item)), 6):
+            expected = [
+                row["color"].brand,
+                row["color"].code,
+                row["stitches"],
+                row["base_work_metres"],
+                row["with_loss_work_metres"],
+                row["packages"],
+                row["supplied_work_metres"],
+                row["raw_single_strand_metres"],
+            ]
+            if [sheet.cell(index, col).value for col in range(1, 9)] != expected or sheet.cell(
+                index, 2
+            ).data_type != "s":
+                raise StitchPressError("Excel配线规则逐色读回不符")
     return {
         "colors": len(entries),
         "total": computed,
         "formula": f"SUM(E3:E{total_row - 1})",
         "cached_by": "stitchpress-owned-integer-SUM-only",
         "external_spreadsheet_render": "pending",
+        "material_rules": material_checks,
     }
 
 

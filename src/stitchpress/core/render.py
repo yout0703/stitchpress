@@ -12,6 +12,8 @@ from .errors import ResourceError, StitchPressError
 from .layout import Fabric, Page, PagePlan, page_coordinates, physical_layout, px
 from .models import Design
 from .resources import SymbolLibrary, load_font, natural_color_key
+from .surface import BandSurface, draw_on
+from .text import draw_layer, parse_layers, values_for
 
 WHITE = (0, 0, 0, 0)
 BLACK = (255, 255, 255, 255)
@@ -37,10 +39,15 @@ class Renderer:
         fabric: Fabric,
         code: str = "",
         font_data: bytes | None = None,
+        title: str = "",
+        text_layers: dict | None = None,
     ):
         self.design, self.library, self.mapping, self.fabric = design, library, mapping, fabric
         self.code = code
         self.font_data = font_data
+        self.fonts = {}
+        self.title = title
+        self.text_layers = parse_layers(text_layers or {})
         used = {c.key for c, n in zip(design.palette, design.counts, strict=True) if n}
         if set(mapping) != used or len(set(mapping.values())) != len(mapping):
             raise StitchPressError("映射必须覆盖且仅覆盖每种有效线色，符号不能复用")
@@ -66,18 +73,23 @@ class Renderer:
 
     def text(self, image, xy, text: str, size: int, anchor="lt"):
         factor = self.fabric.dpi / 300
-        font = load_font(ceil(size * factor), self.font_data)
+        font = self.font(ceil(size * factor))
         if any(ord(c) > 127 for c in text):
             missing = bytes(font.getmask("\U0010ffff"))
             if any(not c.isspace() and bytes(font.getmask(c)) == missing for c in text):
                 raise ResourceError(
                     "所选输出字体缺少文字所需字形，请导入匹配字体；不能静默印出方框"
                 )
-        draw = ImageDraw.Draw(image)
+        draw = draw_on(image)
         box = draw.textbbox(xy, text, font=font, anchor=anchor)
         if box[0] < 0 or box[1] < 0 or box[2] > image.width or box[3] > image.height:
             raise ResourceError(f"文字超出画布，请调整版式：{text[:60]}")
         draw.text(xy, text, fill=BLACK, font=font, anchor=anchor)
+
+    def font(self, pixels):
+        if pixels not in self.fonts:
+            self.fonts[pixels] = load_font(pixels, self.font_data)
+        return self.fonts[pixels]
 
     def tile(self, index: int, w: int, h: int) -> Image.Image:
         key = self.mapping[self.design.palette[index].key]
@@ -112,6 +124,11 @@ class Renderer:
         x0, y0, x1, y1 = raster.window
         inset = raster.inset
         for gy in range(y0, y1):
+            if isinstance(image, BandSurface) and (
+                raster.ys[gy - y0 + 1] <= image.band_top
+                or raster.ys[gy - y0] >= image.band_top + image.image.height
+            ):
+                continue
             for gx in range(x0, x1):
                 index = self.design.labels[gy][gx]
                 if index >= 0:
@@ -128,7 +145,7 @@ class Renderer:
     def legend_entry_width(self) -> int:
         if not self.entries:
             raise StitchPressError("母版没有有效针格，无法生成查图图例")
-        font = load_font(39, self.font_data)
+        font = self.font(39)
         return max(345, ceil(max(font.getlength(c.code) for _, c in self.entries)) + 185)
 
     def reference(self, page: Page, plan: PagePlan, *, style="symbols", minor_grid=True):
@@ -203,11 +220,16 @@ class Renderer:
             f"Neighbors L/R/U/D: {' / '.join(str(n or '-') for n in page.neighbors)}",
             32,
         )
+        self.custom_text(image, "reference", plan=plan, page=page)
         return image, raster
 
-    def production(self):
-        image = self.canvas(self.layout.canvas_px)
-        draw = ImageDraw.Draw(image)
+    def production(self, *, band=None):
+        image = (
+            BandSurface(self.layout.canvas_px, *band)
+            if band
+            else self.canvas(self.layout.canvas_px)
+        )
+        draw = draw_on(image)
         factor = self.fabric.dpi / 300
 
         def sc(n):
@@ -242,12 +264,13 @@ class Renderer:
         self.text(image, (xs[0], y + sc(22)), label, 32)
         # Fit measured entries into free perimeter. Never increase fabric or shrink text.
         row_h = sc(96)
-        max_code = max(load_font(sc(56), self.font_data).getlength(c.code) for _, c in self.entries)
+        max_code = max(self.font(sc(56)).getlength(c.code) for _, c in self.entries)
         entry_w = sc(220) + ceil(max_code)
+        bottom_reserve = sc(180) if self.text_layers.get("production_bottom") else 0
         rects = [
-            (xs[-1] + sc(65), ys[0], image.width - sc(30), image.height - sc(60)),
-            (sc(30), ys[0], xs[0] - sc(150), image.height - sc(60)),
-            (xs[0], ys[-1] + sc(250), xs[-1], image.height - sc(40)),
+            (xs[-1] + sc(65), ys[0], image.width - sc(30), image.height - sc(60) - bottom_reserve),
+            (sc(30), ys[0], xs[0] - sc(150), image.height - sc(60) - bottom_reserve),
+            (xs[0], ys[-1] + sc(250), xs[-1], image.height - sc(40) - bottom_reserve),
             (xs[0], sc(310), xs[-1], ys[0] - sc(150)),
         ]
         slots = []
@@ -266,7 +289,68 @@ class Renderer:
             self.text(image, (x, y + sc(12)), str(k + 1), 50)
             image.paste(self.tile(index, sc(70), sc(70)), (x + sc(85), y))
             self.text(image, (x + sc(180), y + sc(5)), color.code, 56)
+        self.custom_text(image, "production")
         return image, raster
+
+    def custom_text(self, image, kind, *, plan=None, page=None):
+        active = {k: v for k, v in self.text_layers.items() if k.startswith(kind) and v.template}
+        if not active:
+            return
+        factor = self.fabric.dpi / 300
+
+        def sc(n):
+            return ceil(n * factor)
+
+        if not hasattr(self, "_text_values"):
+            self._text_values = values_for(
+                self.design, self.fabric, code=self.code, title=self.title
+            )
+        values = {
+            **self._text_values,
+            "page": page.number if page else "",
+            "pages": len(plan.pages) if plan else "",
+            "scale": plan.scale if plan else "1",
+        }
+        regions = {
+            "production_top": (
+                sc(30),
+                sc(40),
+                image.width - sc(30),
+                min(sc(280), self.layout.ys[0] - sc(150)),
+            ),
+            "production_bottom": (
+                sc(30),
+                image.height - sc(140),
+                image.width - sc(30),
+                image.height - sc(20),
+            ),
+            "reference_top": (sc(150), sc(25), image.width - sc(150), sc(220)),
+            "reference_bottom": (
+                sc(150),
+                image.height - sc(100),
+                image.width - sc(150),
+                image.height - sc(5),
+            ),
+        }
+        for key, layer in active.items():
+            if key.startswith(kind) and layer.template:
+                box = regions[key]
+                if (
+                    kind == "production"
+                    and key.endswith("bottom")
+                    and self.layout.ys[-1] + sc(180) > box[1]
+                ):
+                    raise ResourceError("生产底栏没有足够留白；请调整SKU留白，不会覆盖针格或校尺")
+                draw_on(image).rectangle(box, fill=WHITE)
+                draw_layer(
+                    image,
+                    box,
+                    layer,
+                    values,
+                    font_data=self.font_data,
+                    dpi=self.fabric.dpi,
+                    name=key,
+                )
 
     def verify_cells(self, image: Image.Image, raster: CellRaster) -> dict:
         x0, y0, x1, y1 = raster.window

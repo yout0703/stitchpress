@@ -127,18 +127,20 @@ def analyze(
     prompt: str,
     image: bytes | None = None,
     transport=http_transport,
+    input_icc: bytes | None = None,
 ) -> dict:
     if not secret:
         raise StitchPressError("尚未配置API密钥，请在AI设置中保存到系统安全存储")
     if not prompt.strip():
         raise StitchPressError("请输入设计要求")
     content: str | list = prompt
+    normalization = None
     if image:
         if not profile.vision:
             raise StitchPressError("当前服务未配置图片理解能力，不会丢弃图片只发文字")
         from stitchpress.core.conversion import normalize_image
 
-        im, _ = normalize_image(image)
+        im, normalization = normalize_image(image, input_icc)
         # Vision sees the normalized orientation/colors and explicit white display background.
         display = Image.new("RGBA", im.size, "white")
         display.alpha_composite(im)
@@ -205,6 +207,7 @@ def analyze(
         "usage": response.get("usage", {}),
         "cost": "unknown",
         "profile_sha": digest(profile.to_dict()),
+        "input_normalization": normalization,
     }
 
 

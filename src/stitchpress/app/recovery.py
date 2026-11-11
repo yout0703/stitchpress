@@ -78,6 +78,8 @@ class PresetStore:
         presets = []
         errors = []
         for path in sorted(self.directory.glob("*.json")):
+            if (self.directory / "hidden" / path.name).exists():
+                continue
             try:
                 preset = Preset(**json.loads(path.read_bytes()))
                 if preset.revision != path.stem:
@@ -86,3 +88,11 @@ class PresetStore:
             except (OSError, ValueError, TypeError, StitchPressError) as exc:
                 errors.append(f"{path.name}: {exc}")
         return presets, errors
+
+    def hide(self, preset):
+        path = self.directory / (preset.revision + ".json")
+        if not path.exists():
+            raise StitchPressError("预设版本不存在")
+        atomic_write(
+            self.directory / "hidden" / path.name, canonical_bytes({"revision": preset.revision})
+        )

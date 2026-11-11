@@ -39,13 +39,34 @@ def context_fingerprint(window, operation, include_image=True):
     entities = window.draft.entities
     keys = {"design"}
     if operation in {"plan", "preview", "symbol-card"}:
-        keys |= {"library", "mapping", "fabric", "reference", "output_font", "metadata"}
+        keys |= {
+            "library",
+            "mapping",
+            "fabric",
+            "reference",
+            "output_font",
+            "metadata",
+            "text_layers",
+        }
     if operation == "showcase-preview":
         keys.add("showcase")
+    if operation == "commerce-preview":
+        keys |= {
+            "commerce",
+            "fabric",
+            "metadata",
+            "showcase",
+            "library",
+            "mapping",
+            "output_font",
+            "input_profile",
+        }
     if operation == "convert":
         keys |= {"catalog", "annotations", "input_profile", "conversion_options", "brief"}
     if operation == "analyze":
         keys |= {"brief", "creative_prompt"}
+        if include_image:
+            keys.add("input_profile")
     values = {k: entities.get(k) for k in sorted(keys)}
     if include_image:
         from stitchpress.core.identity import sha256

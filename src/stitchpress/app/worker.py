@@ -11,7 +11,37 @@ def run(job_path: Path) -> int:
     job = json.loads(job_path.read_bytes())
     output = Path(job["output"])
     try:
-        if job["operation"] == "symbol-card":
+        if job["operation"] in {"commerce-export", "commerce-preview"}:
+            from stitchpress.core.commerce import CommerceRenderer, CommerceSettings
+
+            from .commerce import commerce_context, export_commerce
+            from .store import Project
+
+            project = Project.decode(Path(job["project"]).read_bytes())
+            if job["operation"] == "commerce-export":
+                result = export_commerce(
+                    project,
+                    Path(job["target"]),
+                    output.parent,
+                    targets=job["targets"],
+                    demo=job.get("demo", False),
+                    cache_root=output.parent.parent.parent / "cache" / "commerce",
+                    cancel=lambda: Path(job["cancel_file"]).exists(),
+                )
+            else:
+                renderer = CommerceRenderer(
+                    commerce_context(project),
+                    CommerceSettings(**project.entities.get("commerce", {})),
+                    project.assets,
+                    demo=job.get("demo", True),
+                )
+                image, checks = renderer.render(job["target"])
+                preview = output.parent / "commerce-preview.png"
+                image.save(preview)
+                image.close()
+                renderer.subject.close()
+                result = {"preview": str(preview), "checks": checks}
+        elif job["operation"] == "symbol-card":
             from .store import Project
             from .symbols import export_symbol_card
 
@@ -56,6 +86,8 @@ def run(job_path: Path) -> int:
                     context["reference"],
                     code=context["code"],
                     font_data=context["font_data"],
+                    title=context["title"],
+                    text_layers=context["text_layers"],
                 )
                 if job["operation"] == "preview":
                     number = job.get("page_number", 1)
@@ -105,6 +137,7 @@ def run(job_path: Path) -> int:
                 load_secret(profile.credential_key) or "",
                 job["prompt"],
                 Path(job["image"]).read_bytes() if job.get("image") else None,
+                input_icc=Path(job["input_icc"]).read_bytes() if job.get("input_icc") else None,
             )
         else:
             raise ValueError("未知工作进程操作")

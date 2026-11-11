@@ -55,10 +55,30 @@ def validate_entities(entities: dict, assets: dict[str, bytes]):
         ReferenceSettings(**entities["reference"])
     if entities.get("showcase"):
         ShowcaseSettings(**entities["showcase"])
+    if entities.get("commerce"):
+        from stitchpress.core.commerce import CommerceSettings, SceneSettings
+
+        settings = CommerceSettings(**entities["commerce"])
+        for scene in settings.scenes:
+            asset = SceneSettings(**scene).background_asset
+            if asset and asset not in assets:
+                raise StitchPressError("商品模板缺少内嵌背景")
     if entities.get("conversion_options"):
         ConversionOptions(**entities["conversion_options"])
     if entities.get("brief"):
         DesignBrief(**entities["brief"])
+    if entities.get("material_rules"):
+        from stitchpress.core.materials import MaterialRule
+
+        rules = entities["material_rules"].get("rules")
+        if not isinstance(rules, list) or len(rules) > 12:
+            raise StitchPressError("配线规则须为不超过12套的清单")
+        for record in rules:
+            MaterialRule(**record)
+    if entities.get("text_layers"):
+        from stitchpress.core.text import parse_layers
+
+        parse_layers(entities["text_layers"])
     if entities.get("ai_policy"):
         from .task_history import AIPolicy
 

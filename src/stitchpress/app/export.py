@@ -5,6 +5,8 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from dataclasses import asdict
+from decimal import Decimal
+from math import ceil
 from pathlib import Path
 from time import monotonic
 from uuid import uuid4
@@ -13,46 +15,108 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from stitchpress import __version__
 from stitchpress.core.configuration import ReferenceSettings, ShowcaseSettings
 from stitchpress.core.documents import write_counts, write_pdf
-from stitchpress.core.errors import StitchPressError
+from stitchpress.core.errors import Cancelled, StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256, sha256_file
-from stitchpress.core.layout import Fabric, page_plan
+from stitchpress.core.layout import Fabric, PagePlan, decimal, page_plan, px
 from stitchpress.core.models import Design, ReviewRecord, ThreadColor, validate_catalog_membership
 from stitchpress.core.render import MAX_RENDER_PIXELS, Renderer, stitch_preview
 from stitchpress.core.resources import SymbolLibrary, bundled_font
+from stitchpress.core.streaming import MAX_STREAM_PIXELS, save_production_stream
 from stitchpress.platform.files import atomic_write, exclusive_lock
 
 from .artifact_cache import ArtifactCache
 
-PIPELINE_REVISION = "local-export-v3"
+PIPELINE_REVISION = "local-export-v4"
 FULL_TARGETS = frozenset({"production", "reference", "pdf", "counts", "showcase", "notes"})
 
 
-def export_plan(design, library, mapping, fabric, reference=None, *, code="", font_data=None):
+def export_plan(
+    design,
+    library,
+    mapping,
+    fabric,
+    reference=None,
+    *,
+    code="",
+    font_data=None,
+    title="",
+    text_layers=None,
+    targets=FULL_TARGETS,
+):
     reference = reference or ReferenceSettings()
-    renderer = Renderer(design, library, mapping, fabric, code=code, font_data=font_data)
-    plan = page_plan(
-        design.width,
-        design.height,
-        len(mapping),
+    renderer = Renderer(
+        design,
+        library,
+        mapping,
         fabric,
-        paper_cm=reference.paper_cm,
-        overlap=reference.overlap,
-        scale=reference.scale,
-        legend_entry_width=renderer.legend_entry_width(),
+        code=code,
+        font_data=font_data,
+        title=title,
+        text_layers=text_layers,
+    )
+    paper_cm = reference.paper_cm
+    if reference.paper == "whole":
+        factor = fabric.dpi / 300
+        mag = decimal(reference.scale)
+        pw = max(
+            ceil(300 * factor)
+            + px(decimal(fabric.sx) * ceil(design.width / 10) * 10 * mag, fabric.dpi)
+            + 50,
+            ceil((300 + 6 * renderer.legend_entry_width()) * factor),
+        )
+        columns = min(6, (pw - ceil(300 * factor)) // ceil(renderer.legend_entry_width() * factor))
+        ph = (
+            ceil((285 + 80 + 330) * factor)
+            + ceil(len(mapping) / columns) * ceil(62 * factor)
+            + px(decimal(fabric.sy) * ceil(design.height / 10) * 10 * mag, fabric.dpi)
+            + 50
+        )
+        paper_cm = tuple(str(Decimal(n) * Decimal("2.54") / fabric.dpi) for n in (pw, ph))
+    needs_pages = bool(set(targets) & {"reference", "pdf", "notes"})
+    plan = (
+        page_plan(
+            design.width,
+            design.height,
+            len(mapping),
+            fabric,
+            paper_cm=paper_cm,
+            overlap=reference.overlap,
+            scale=reference.scale,
+            legend_entry_width=renderer.legend_entry_width(),
+        )
+        if needs_pages
+        else PagePlan(
+            paper_cm,
+            tuple(px(decimal(v), fabric.dpi) for v in paper_cm),
+            (0, 0),
+            0,
+            0,
+            0,
+            0,
+            (0, 0),
+            (),
+        )
     )
     if len(plan.pages) > 100:
         raise StitchPressError("试验版暂限100张查图页，请减少当前任务规模")
     # Conservative working-space estimate, including decoded rasters, PDF, staging and cache.
     production = renderer.layout.canvas_px[0] * renderer.layout.canvas_px[1]
     page_pixels = plan.paper_px[0] * plan.paper_px[1]
-    if max(production, page_pixels) > MAX_RENDER_PIXELS:
-        raise StitchPressError("输出超过6000万像素当前渲染上限；请调整纸张/独立SKU，不能静默缩小")
-    estimated_bytes = 6 * (production * 4 + page_pixels * 4 * len(plan.pages))
+    if ("production" in targets and production > MAX_STREAM_PIXELS) or (
+        needs_pages and page_pixels > MAX_RENDER_PIXELS
+    ):
+        raise StitchPressError("生产超过2.5亿或单页超过6000万像素当前上限；不能静默缩小")
+    estimated_bytes = max(
+        16 * 1024**2,
+        6
+        * ((production * 4 if "production" in targets else 0) + page_pixels * 4 * len(plan.pages)),
+    )
     return (
         renderer,
         plan,
         {
             "production_px": renderer.layout.canvas_px,
+            "production_streaming": production > MAX_RENDER_PIXELS,
             "paper_px": plan.paper_px,
             "page_count": len(plan.pages),
             "files": len(plan.pages) + 6,
@@ -62,10 +126,6 @@ def export_plan(design, library, mapping, fabric, reference=None, *, code="", fo
             "plan": plan.to_dict(),
         },
     )
-
-
-class Cancelled(StitchPressError):
-    pass
 
 
 def export_package(
@@ -85,6 +145,8 @@ def export_package(
     showcase_options: ShowcaseSettings | None = None,
     targets: frozenset[str] | None = None,
     font_data: bytes | None = None,
+    text_layers: dict | None = None,
+    material_rules: tuple | list = (),
     cache_root: Path | None = None,
     request_id: str | None = None,
     cancel: Callable[[], bool] = lambda: False,
@@ -107,7 +169,16 @@ def export_package(
     if not any(design.counts):
         raise StitchPressError("母版没有有效针格")
     renderer, plan, estimate = export_plan(
-        design, library, mapping, fabric, reference, code=code, font_data=font_data
+        design,
+        library,
+        mapping,
+        fabric,
+        reference,
+        code=code,
+        font_data=font_data,
+        title=title,
+        text_layers=text_layers,
+        targets=targets,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
@@ -129,6 +200,8 @@ def export_package(
         "reference": reference.to_dict(),
         "showcase": showcase_options.to_dict(),
         "targets": sorted(targets),
+        "text_layers": text_layers or {},
+        "material_rules": material_rules,
         "font_sha": sha256(font_data or bundled_font().read_bytes()),
         "symbol_pixels": {s.key: s.pixel_sha for s in library.symbols},
         "catalog_membership": [c.key for c in catalog],
@@ -193,7 +266,17 @@ def export_package(
     render_dependencies = {
         k: v
         for k, v in snapshot.items()
-        if k not in {"reference", "showcase", "targets", "title", "catalog_membership", "demo"}
+        if k
+        not in {
+            "reference",
+            "showcase",
+            "targets",
+            "title",
+            "text_layers",
+            "material_rules",
+            "catalog_membership",
+            "demo",
+        }
     }
     staging = Path(tempfile.mkdtemp(prefix=".stitchpress-", dir=destination.parent))
     try:
@@ -207,13 +290,33 @@ def export_package(
             path = staging / "Production" / f"{name}-Production-v01.tif"
 
             def production():
+                if estimate["production_streaming"]:
+                    return save_production_stream(renderer, path, cancel=cancel, progress=progress)
                 image, raster = renderer.production()
                 try:
                     return renderer.save_tiff(image, path, raster)
                 finally:
                     image.close()
 
-            artifact(path, staging, {"kind": "production", **render_dependencies}, production)
+            artifact(
+                path,
+                staging,
+                {
+                    "kind": "production",
+                    **render_dependencies,
+                    "text": {
+                        k: v for k, v in (text_layers or {}).items() if k.startswith("production")
+                    },
+                    "title": title
+                    if any(
+                        "{title}" in v.get("template", "")
+                        for k, v in (text_layers or {}).items()
+                        if k.startswith("production")
+                    )
+                    else "",
+                },
+                production,
+            )
         page_paths = []
         page_directory = (
             staging / pages_folder if "reference" in targets else work / "reference-pages" / job_id
@@ -240,6 +343,16 @@ def export_package(
                     **render_dependencies,
                     "reference": reference.to_dict(),
                     "page": asdict(page),
+                    "text": {
+                        k: v for k, v in (text_layers or {}).items() if k.startswith("reference")
+                    },
+                    "title": title
+                    if any(
+                        "{title}" in v.get("template", "")
+                        for k, v in (text_layers or {}).items()
+                        if k.startswith("reference")
+                    )
+                    else "",
                 },
                 reference_page,
                 published="reference" in targets,
@@ -265,8 +378,13 @@ def export_package(
             artifact(
                 path,
                 staging,
-                {"kind": "counts", "design": design.content_sha, "code": code},
-                lambda: write_counts(design, code, path),
+                {
+                    "kind": "counts",
+                    "design": design.content_sha,
+                    "code": code,
+                    "material_rules": material_rules,
+                },
+                lambda: write_counts(design, code, path, material_rules),
             )
         if "showcase" in targets:
             path = staging / "Showcase" / f"{name}-Showcase-v01.png"
@@ -317,6 +435,8 @@ def export_package(
             "reference": reference.to_dict(),
             "showcase": showcase_options.to_dict(),
             "targets": sorted(targets),
+            "material_rules": material_rules,
+            "text_layers": text_layers or {},
             "package_type": "selected-outputs"
             if targets != FULL_TARGETS
             else "factory-compatible-N+6"
@@ -327,12 +447,14 @@ def export_package(
             path = staging / f"READ_ME_{language}.txt"
             caption = (
                 "演示/待试印；非量产验收。实际大小/100%打印，关闭适合页面。\n"
-                "模拟图由母版确定性生成，样式见showcase字段，非实绣照片。配线仅为准确针数，不估算米数。\n"
+                "模拟图由母版确定性生成，非实绣照片。未配置客户材料规则时仅给针数；"
+                "如有材料估算，口径与来源见material_rules和表格，不代表厂家验证。\n"
                 "图片转换/重建并不等于恢复原供应商针格。\n"
                 if language == "CN"
                 else "Demo / factory test pending. Print Actual Size / 100%; disable Fit/Shrink.\n"
                 "Showcase is a deterministic chart simulation, not a stitched photograph.\n"
-                "Counts are full crosses; blank cells excluded. No thread length estimate.\n"
+                "Counts are full crosses; blank cells excluded. Optional thread estimates use "
+                "only the configured customer rules listed in material_rules and the workbook.\n"
                 "Image reconstruction does not recover an original supplier's stitch grid.\n"
             )
             path.write_text(

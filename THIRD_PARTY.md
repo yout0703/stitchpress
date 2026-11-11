@@ -5,7 +5,7 @@
 ## 字体
 
 - 随源码提供`NotoSans-Regular.ttf`，取自[Noto Fonts官方仓库](https://github.com/notofonts/noto-fonts/tree/main/hinted/ttf/NotoSans)，许可为SIL Open Font License；完整文本见`src/stitchpress/resources/fonts/OFL.txt`。
-- 当前通用输出只绑定这一字体；它不包含全部中文字符，缺字必须提示，不能默默印成方框。CJK输出字体导入和版式仍待补齐。
+- 当前通用输出只绑定这一字体；它不包含全部中文字符，缺字必须提示，不能默默印成方框。现已支持作品内嵌TTF/OTF；用户须自行提供有权使用、包含所需字形的字体。
 
 ## 程序库
 
@@ -20,3 +20,9 @@ Qt 6.12部署配置指定的Nuitka 4.1.1已做试验，但未通过中文安装�
 ## 客户资源
 
 66符号、455线色及厂家ICC仅由本机明确导入，不进入通用安装包、公开夹具或Git。原件SHA和原ID保留；历史客户预设仅作为当前合作配置，不提升为行业通用规则。
+
+## 分条TIFF与商品模板
+
+tifffile 2026.11.8与imagecodecs 2026.10.10用于classic CMYK/LZW分条TIFF和独立分条解码核验，版本由uv.lock锁定。程序仅使用imagecodecs的内置LZW路径，构建显式收集所需扩展及随包通知；主许可存于resources/notices/。
+
+9类场景/8类相框是本项目代码绘制的示意插画，没有复制参考APP场景或框图。客户背景只由用户明确导入并嵌入作品；不自动下载第三方照片。

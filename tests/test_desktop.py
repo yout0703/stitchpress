@@ -194,3 +194,25 @@ def test_project_change_clears_stale_selection_and_disables_patch(qtbot):
     assert not window.patch_color.isEnabled()
     assert not window.undo_button.isEnabled()
     window.close()
+
+
+def test_large_canvas_uses_viewport_tiles_without_full_preview_allocation(qtbot, monkeypatch):
+    from stitchpress.app.fixtures import demo_project
+    from stitchpress.app.grid_item import StitchGridItem
+
+    window = Workbench()
+    monkeypatch.setattr(window, "confirm_discard", lambda: True)
+    qtbot.addWidget(window)
+    window.show()
+    project = demo_project(640, 640, 3)
+    window.set_project(project)
+    item = next(i for i in window.canvas.scene().items() if isinstance(i, StitchGridItem))
+    assert item.overview.width() == 640 and item.overview.height() == 640
+    window.canvas.actual_pixels()
+    window.canvas.centerOn(item.dx + 320 * 18, item.dy + 320 * 18)
+    window.canvas.viewport().repaint()
+    qtbot.waitUntil(lambda: item.last_visible_cells > 0)
+    assert 0 < item.last_visible_cells < 10000
+    window.select_region(QRectF(item.dx + 300 * 18, item.dy + 300 * 18, 2 * 18, 3 * 18))
+    assert window.region == (300, 300, 302, 303)
+    window.close()

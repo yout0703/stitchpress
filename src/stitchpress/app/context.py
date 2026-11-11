@@ -33,4 +33,6 @@ def export_context(project):
         if catalog
         else (),
         "font_data": project.assets[font["asset"]] if font else None,
+        "text_layers": project.entities.get("text_layers", {}),
+        "material_rules": project.entities.get("material_rules", {}).get("rules", []),
     }

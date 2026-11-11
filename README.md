@@ -65,7 +65,7 @@ Git远端：`git@wozaigithub:yout0703/stitchpress.git`，后续推送使用用�
 
 StitchPress 是独立项目。原生产项目只作为资源、流程与样本来源，安装后的应用不能依赖开发者电脑上的绝对路径。
 
-本地新增功能、恢复及批量操作见[本地流程进展](docs/14-本地流程进展.md)。
+操作说明随包保存在[使用说明](src/stitchpress/resources/help/使用说明.txt)。本地新增功能、恢复及批量操作见[本地流程进展](docs/14-本地流程进展.md)。
 
 ## 当前AI配置
 

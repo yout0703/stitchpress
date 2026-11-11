@@ -100,9 +100,10 @@ class SpecificationDialog(QDialog):
         reference_page = QWidget()
         form = QFormLayout(reference_page)
         self.paper = QComboBox()
-        self.paper.addItems(["A4", "A3", "A2", "custom"])
+        self.paper.addItems(["A4", "A3", "A2", "custom", "whole"])
         self.paper.setItemText(3, "自定义")
         self.paper.setItemData(3, "custom")
+        self.paper.setItemText(4, "整张查图（按母版尺寸）")
         self.custom_w, self.custom_h = QLineEdit(), QLineEdit()
         self.landscape = QCheckBox("横向（交换宽高）")
         self.scale = QLineEdit()
@@ -165,6 +166,7 @@ class SpecificationDialog(QDialog):
         for text, callback in (
             ("将所选预设填入本窗口", self.load_preset),
             ("当前参数另存为新预设…", self.save_preset),
+            ("移除所选预设（历史保留）", self.hide_preset),
             ("恢复 0.181cm 基础参数", self.reset),
         ):
             item = QPushButton(text)
@@ -183,6 +185,8 @@ class SpecificationDialog(QDialog):
         )
         self.reload_presets()
         self.margin_unit.currentIndexChanged.connect(self.change_margin_unit)
+        self.paper.currentIndexChanged.connect(self.update_paper_controls)
+        self.update_paper_controls()
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -207,7 +211,7 @@ class SpecificationDialog(QDialog):
             display = margin_value(getattr(fabric, key), fabric.margin_unit, pitch, to_cm=False)
             self.fabric_fields[key].setText(display)
             self._margin_baseline[key] = (display, getattr(fabric, key), pitch)
-        self.paper.setCurrentIndex(["A4", "A3", "A2", "custom"].index(reference.paper))
+        self.paper.setCurrentIndex(["A4", "A3", "A2", "custom", "whole"].index(reference.paper))
         self.custom_w.setText(reference.custom_width_cm)
         self.custom_h.setText(reference.custom_height_cm)
         self.landscape.setChecked(reference.landscape)
@@ -215,6 +219,17 @@ class SpecificationDialog(QDialog):
         self.overlap.setValue(reference.overlap)
         self.style.setCurrentIndex(self.style.findData(reference.style))
         self.minor_grid.setChecked(reference.minor_grid)
+        self.update_paper_controls()
+
+    def update_paper_controls(self):
+        whole = self.paper.currentIndex() == 4
+        self.custom_w.setEnabled(self.paper.currentIndex() == 3)
+        self.custom_h.setEnabled(self.paper.currentIndex() == 3)
+        self.overlap.setEnabled(not whole)
+        self.landscape.setEnabled(not whole)
+        if whole:
+            self.overlap.setValue(0)
+            self.landscape.setChecked(False)
 
     def values(self):
         from stitchpress.core.configuration import margin_value
@@ -240,7 +255,7 @@ class SpecificationDialog(QDialog):
             margin_unit=self._margin_unit,
         )
         reference = ReferenceSettings(
-            paper=["A4", "A3", "A2", "custom"][self.paper.currentIndex()],
+            paper=["A4", "A3", "A2", "custom", "whole"][self.paper.currentIndex()],
             custom_width_cm=self.custom_w.text().strip(),
             custom_height_cm=self.custom_h.text().strip(),
             landscape=self.landscape.isChecked(),
@@ -336,6 +351,14 @@ class SpecificationDialog(QDialog):
 
     def reset(self):
         self.fill(Fabric(), ReferenceSettings())
+
+    def hide_preset(self):
+        try:
+            if preset := self.presets.currentData():
+                self.preset_store.hide(preset)
+                self.reload_presets()
+        except Exception as exc:
+            QMessageBox.warning(self, "预设未移除", str(exc))
 
 
 class PagePreview(QDialog):
@@ -790,27 +813,17 @@ class LocalFeatures:
                 "output_font",
                 "input_profile",
                 "annotations",
+                "brief",
+                "creative_prompt",
+                "ai_policy",
+                "text_layers",
+                "commerce",
+                "commerce_targets",
+                "material_rules",
             )
             current = {k: copy.deepcopy(self.draft.entities.get(k)) for k in active_keys}
             updated = copy.deepcopy(self.draft)
-            for key in (
-                "design",
-                "mapping",
-                "freeze",
-                "metadata",
-                "fabric",
-                "reference",
-                "showcase",
-                "conversion_options",
-                "active_conversion",
-                "source",
-                "catalog",
-                "library",
-                "source_profile",
-                "output_font",
-                "input_profile",
-                "annotations",
-            ):
+            for key in active_keys:
                 updated.entities.pop(key, None)
                 if key in restored.entities:
                     updated.entities[key] = restored.entities[key]
@@ -838,6 +851,8 @@ class LocalFeatures:
             self.dirty = True
             self.refresh(fit=True)
             self.restore_conversion_controls()
+            self.restore_ai_state()
+            self.sync_task_records()
         except Exception as exc:
             self.error(exc)
 

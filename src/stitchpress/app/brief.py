@@ -94,6 +94,11 @@ class BriefDialog(QDialog):
             form.addRow(label, widget)
         catalog = owner.draft.entities.get("catalog")
         self.catalog_revision = sha256(owner.draft.assets[catalog["asset"]]) if catalog else None
+        self.confirmed.setChecked(
+            self.original.confirmed
+            and self.original.source_sha == self.current_source()
+            and self.original.catalog_revision == self.catalog_revision
+        )
         label = QLabel(
             f"当前输入：{(self.current_source() or '无图片')[:16]}\n"
             f"线色目录：{(self.catalog_revision or '尚未导入')[:16]} · "
@@ -182,12 +187,21 @@ class BriefFeatures:
         self.prompt.blockSignals(False)
         self.ai_include_image.blockSignals(False)
         brief = self.draft.entities.get("brief")
+        source_sha = sha256(self.source_image) if self.source_image else None
+        catalog = self.draft.entities.get("catalog")
+        catalog_sha = sha256(self.draft.assets[catalog["asset"]]) if catalog else None
         self.brief_summary.setText(
             "尚未保存结构化设计要求；可先填写本地方案，再决定是否调用AI。"
             if not brief
             else f"{INPUT_KINDS[brief['input_kind']]} · {ROUTES[brief['route']]} · "
             f"{brief['width']}×{brief['height']}格 · 最多{brief['max_colors']}色 · "
-            + ("人工已确认" if brief["confirmed"] else "草稿待确认")
+            + (
+                "输入/目录已改变，待复核"
+                if brief["source_sha"] != source_sha or brief["catalog_revision"] != catalog_sha
+                else "人工已确认"
+                if brief["confirmed"]
+                else "草稿待确认"
+            )
         )
 
     def analysis_to_brief(self):

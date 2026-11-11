@@ -102,6 +102,7 @@ def build_workspace(w, canvas_type):
             "制版与查图",
             (
                 ("尺寸、查图与预设…", w.specification_settings),
+                ("顶底栏文字与占位符…", w.edit_text_layers),
                 ("查图分页与原像素预览…", w.plan_preview),
                 ("母版数字检查…", w.inspect_master),
                 ("导出全针 OXS…", w.export_oxs_file),
@@ -113,6 +114,7 @@ def build_workspace(w, canvas_type):
                 ("符号库管理…", w.manage_symbols),
                 ("重新自动分配符号…", w.reassign_symbols),
                 ("导出符号速查卡…", w.export_symbol_card),
+                ("配线规则与多CT…", w.material_settings),
                 ("导入源图输入 ICC…", w.import_input_icc),
                 ("清除源图输入 ICC 覆盖", w.clear_input_icc),
                 ("清除当前蒙版标注", w.clear_annotations),
@@ -130,6 +132,9 @@ def build_workspace(w, canvas_type):
             (
                 ("批量导出已保存作品…", w.batch_export),
                 ("按需导出补件…", w.export_selected),
+                ("商品模板设置…", w.edit_commerce),
+                ("商品素材预览…", w.preview_commerce),
+                ("导出商品7+5或单项…", w.export_commerce_files),
                 ("恢复本机导出批次…", w.resume_batch),
                 ("登记交付/试印/洗水验收…", w.delivery_review),
                 ("压缩已核验交付为 ZIP…", w.zip_delivery),
@@ -141,6 +146,8 @@ def build_workspace(w, canvas_type):
             menu.addAction(text, callback)
     file_menu.addSeparator()
     file_menu.addAction("AI 服务配置…", w.ai_settings)
+    file_menu.addAction("本地反馈与附件…", w.feedback_local)
+    file_menu.addAction("使用帮助与当前范围…", w.help_local)
     file_button.setMenu(file_menu)
     hl.addWidget(file_button)
     w.export_nav = button(w, "交付", lambda: w.show_page(2), "mdi6.tray-arrow-up", checkable=True)
@@ -471,9 +478,17 @@ def build_export(w):
     configure_row.addWidget(button(w, "尺寸与查图设置", w.specification_settings))
     configure_row.addWidget(button(w, "分页与原像素预览", w.plan_preview))
     configure_row.addWidget(button(w, "母版数字检查", w.inspect_master))
+    configure_row.addWidget(button(w, "顶底文字", w.edit_text_layers))
     configure_row.addWidget(button(w, "展示模拟预览", w.preview_simulation))
     configure_row.addStretch()
     cl.addLayout(configure_row)
+    commerce_row = QHBoxLayout()
+    commerce_row.addWidget(button(w, "商品模板设置…", w.edit_commerce))
+    commerce_row.addWidget(button(w, "配线规则…", w.material_settings))
+    commerce_row.addWidget(button(w, "商品实际预览…", w.preview_commerce))
+    commerce_row.addWidget(button(w, "导出7+5或单张…", w.export_commerce_files))
+    commerce_row.addStretch()
+    cl.addLayout(commerce_row)
     w.demo_mode = QCheckBox("演示模式（不能作为正式生产验收）")
     w.demo_mode.setChecked(True)
     cl.addWidget(w.demo_mode)

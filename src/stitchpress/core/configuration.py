@@ -43,8 +43,8 @@ class ReferenceSettings:
     minor_grid: bool = True
 
     def __post_init__(self):
-        if self.paper not in {*PAPERS, "custom"}:
-            raise StitchPressError("纸张仅支持A4/A3/A2或自定义")
+        if self.paper not in {*PAPERS, "custom", "whole"}:
+            raise StitchPressError("纸张仅支持A4/A3/A2、自定义或整张查图")
         if any(
             not isinstance(v, str)
             for v in (self.scale, self.custom_width_cm, self.custom_height_cm)
@@ -59,6 +59,8 @@ class ReferenceSettings:
             raise StitchPressError("自定义纸张边长须为10–120cm")
         if type(self.overlap) is not int or not 0 <= self.overlap <= 30:
             raise StitchPressError("重叠格数须为0–30整数")
+        if self.paper == "whole" and self.overlap:
+            raise StitchPressError("整张查图不分页，重叠须为0")
         if self.style not in {"symbols", "pale", "color"}:
             raise StitchPressError("未知查图样式")
         if type(self.landscape) is not bool or type(self.minor_grid) is not bool:

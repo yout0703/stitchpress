@@ -8,3 +8,7 @@ class ConflictError(StitchPressError):
 
 class ResourceError(StitchPressError):
     """A required resource is absent, invalid, or exceeds the tested limit."""
+
+
+class Cancelled(StitchPressError):
+    """Explicit cancellation, separate from an encoding or validation failure."""

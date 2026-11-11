@@ -35,6 +35,14 @@ def main(argv=None):
     archive.add_argument("directory", type=Path)
     archive.add_argument("receipt", type=Path)
     archive.add_argument("output", type=Path)
+    commerce = sub.add_parser("commerce")
+    commerce.add_argument("project", type=Path)
+    commerce.add_argument("destination", type=Path)
+    commerce.add_argument("--work", type=Path, required=True)
+    commerce.add_argument("--cache", type=Path)
+    commerce.add_argument("--demo", action="store_true")
+    commerce.add_argument("--targets", help="逗号分隔detail-scene-1等目标；默认7+5全套")
+    commerce.add_argument("--cancel-file", type=Path)
     export = sub.add_parser("export")
     export.add_argument("project", type=Path)
     export.add_argument("destination", type=Path)
@@ -51,7 +59,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return execute(args)
-    except (StitchPressError, OSError, KeyError, TypeError) as exc:
+    except (StitchPressError, OSError, KeyError, TypeError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), flush=True)
         return 2
 
@@ -116,6 +124,21 @@ def execute(args):
 
         project = Project.decode(args.project.read_bytes())
         data = inspect_design(Design.from_dict(project.entities["design"]))
+    elif args.command == "commerce":
+        from .app.commerce import export_commerce
+        from .core.commerce import TARGETS
+
+        project = Project.decode(args.project.read_bytes())
+        data = export_commerce(
+            project,
+            args.destination,
+            args.work,
+            targets=tuple(args.targets.split(",")) if args.targets else TARGETS,
+            demo=args.demo,
+            cache_root=args.cache,
+            cancel=lambda: bool(args.cancel_file and args.cancel_file.exists()),
+            progress=lambda event: print(json.dumps(event), flush=True),
+        )
     elif args.command == "plan":
         from .app.context import export_context
         from .app.export import export_plan
@@ -129,6 +152,8 @@ def execute(args):
             context["reference"],
             code=context["code"],
             font_data=context["font_data"],
+            title=context["title"],
+            text_layers=context["text_layers"],
         )
     elif args.command == "oxs":
         from .core.importers import export_oxs, import_oxs

@@ -39,7 +39,7 @@ from stitchpress.core.importers import import_oxs
 from stitchpress.core.layout import Fabric, physical_layout
 from stitchpress.core.masks import annotation_masks
 from stitchpress.core.models import Design, PatchCell, ReviewRecord, apply_patch
-from stitchpress.core.render import screen_rgb, stitch_preview
+from stitchpress.core.render import screen_rgb
 from stitchpress.core.resources import assign_symbols, library_from_assets, natural_color_key
 from stitchpress.core.xsd import import_xsd
 from stitchpress.platform.files import atomic_write
@@ -50,12 +50,17 @@ from .ai import ImageServiceProfile, ServiceProfile
 from .appearance import THEMES, apply_appearance
 from .assets import merge_assets, remap_assets
 from .brief import BriefFeatures
+from .commerce_ui import CommerceFeatures
 from .fixtures import demo_project
+from .grid_item import StitchGridItem
+from .help_feedback import HelpFeedbackFeatures
 from .local_features import LocalFeatures, PagePreview
+from .materials_ui import MaterialFeatures
 from .store import Coordinator, Project
 from .symbols import SymbolFeatures
 from .task_history import AIPolicy, TaskHistory, context_fingerprint
 from .task_ui import TaskFeatures, instance_id
+from .text_settings import TextFeatures
 from .workspace import build_workspace
 
 
@@ -90,6 +95,22 @@ class Canvas(QGraphicsView):
             self._selection = None
         self.draw_selection(self._selection)
         self.draw_regions(self._regions)
+        if fit or self._auto_fit:
+            self.fit()
+
+    def set_design(self, design, highlight=None, fit=False):
+        old_rect = self.sceneRect()
+        self.scene().clear()
+        self.selection_item = None
+        self._region_items = []
+        item = StitchGridItem(design, highlight)
+        self.scene().addItem(item)
+        self.setSceneRect(item.boundingRect())
+        if old_rect != self.sceneRect():
+            self._selection = None
+        self.draw_selection(self._selection)
+        self.draw_regions(self._regions)
+        self.setToolTip("缩小时显示线色色块概览，放大后按当前视窗绘制X针；选区始终使用原针格坐标")
         if fit or self._auto_fit:
             self.fit()
 
@@ -266,7 +287,17 @@ class AISettings(QDialog):
             QMessageBox.warning(self, "未保存配置", str(exc))
 
 
-class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMainWindow):
+class Workbench(
+    LocalFeatures,
+    SymbolFeatures,
+    BriefFeatures,
+    TaskFeatures,
+    TextFeatures,
+    CommerceFeatures,
+    MaterialFeatures,
+    HelpFeedbackFeatures,
+    QMainWindow,
+):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("StitchPress · 绣印工坊 · 开发试验版")
@@ -469,7 +500,7 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
             selected_index = (
                 selected_items[0].data(Qt.ItemDataRole.UserRole) if selected_items else None
             )
-            self.canvas.set_image(stitch_preview(design, highlight=selected_index), fit=fit)
+            self.canvas.set_design(design, highlight=selected_index, fit=fit)
             self.refresh_annotations()
             patch_index = self.patch_color.currentData()
             self.table.setRowCount(0)
@@ -556,6 +587,7 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
             self.draft.entities["mapping"] = mapping
             self.dirty = True
             self.refresh()
+            self.restore_ai_state()
         except Exception as exc:
             self.error(exc)
 
@@ -564,7 +596,7 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
             return
         selected = self.table.selectedItems()
         color = selected[0].data(Qt.ItemDataRole.UserRole) if selected else None
-        self.canvas.set_image(stitch_preview(self.design, highlight=color))
+        self.canvas.set_design(self.design, highlight=color)
         self.symbol_button.setEnabled(color is not None)
         if color is not None:
             self.patch_color.setCurrentIndex(self.patch_color.findData(color))
@@ -653,7 +685,6 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
         """Validate before changing the active revision; failed imports cannot destroy it."""
         library = library_from_assets(self.draft.entities["library"], self.draft.assets)
         mapping = assign_symbols(design, library, self.draft.entities.get("mapping"))
-        stitch_preview(design)  # Enforce preview resource bounds before mutating current data.
         old = {
             "design": self.design.to_dict(),
             "mapping": copy.deepcopy(self.draft.entities.get("mapping")),
@@ -726,7 +757,6 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
         Fabric(**project.entities["fabric"])
         library = library_from_assets(project.entities["library"], project.assets)
         assign_symbols(design, library, project.entities.get("mapping"))
-        stitch_preview(design)
         if any(
             not isinstance(project.entities.get("metadata", {}).get(k), str)
             for k in ("title", "code")
@@ -911,20 +941,43 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
         if path:
             try:
                 data = Path(path).read_bytes()
-                self.display_source(data)
+                self.import_source(data, Path(path).name)
             except Exception as exc:
                 self.error(exc)
-                return
-            self.source_image = data
-            name = f"sources/{sha256(self.source_image)}{Path(path).suffix.lower()}"
-            self.draft.assets[name] = self.source_image
-            self.draft.entities["source"] = {"asset": name, "role": "unreviewed-input"}
-            self.capture_conversion_options()
-            self.source_label.setText(Path(path).name + "\n直接转换仅适合干净蓝图，需人工审核")
-            self.dirty = True
-            self.update_document_state()
-            self.compare_button.setChecked(True)
-            self.toggle_source()
+
+    def import_source(self, data, filename):
+        import io
+
+        from PIL import Image
+
+        if len(data) > 64 * 1024**2:
+            raise StitchPressError("单张原图超过64MiB项目资源上限")
+        with Image.open(io.BytesIO(data)) as image:
+            if image.width * image.height > 40_000_000 or getattr(image, "n_frames", 1) != 1:
+                raise StitchPressError("原图须为单帧且不超过4000万像素")
+            image.load()
+        if self.source_image is None or sha256(data) != sha256(self.source_image):
+            for key in ("source", "input_profile"):
+                if old := self.draft.entities.pop(key, None):
+                    self.draft.entities[f"{key}:{uuid4().hex}"] = old
+        self.source_image = data
+        name = f"sources/{sha256(data)}{Path(filename).suffix.lower()}"
+        self.draft.assets[name] = data
+        self.draft.entities["source"] = {"asset": name, "role": "unreviewed-input"}
+        try:
+            self.display_source(data)
+            self.source_label.setText(filename + "\n直接转换仅适合干净蓝图，需人工审核")
+        except StitchPressError as exc:
+            self.source_canvas.scene().clear()
+            self.source_canvas.hide()
+            self.source_empty.show()
+            self.source_label.setText(filename + "\n原件已保存，等待修正输入ICC：" + str(exc))
+        self.capture_conversion_options()
+        self.dirty = True
+        self.update_document_state()
+        self.restore_ai_state()
+        self.compare_button.setChecked(True)
+        self.toggle_source()
 
     def display_source(self, data):
         from PIL import Image
@@ -957,6 +1010,9 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
         if self.source_image and job.get("include_image", True):
             atomic_write(folder / "source.image", self.source_image)
             job["image"] = str(folder / "source.image")
+            if profile := self.draft.entities.get("input_profile"):
+                atomic_write(folder / "input.icc", self.draft.assets[profile["asset"]])
+                job["input_icc"] = str(folder / "input.icc")
         if operation == "convert":
             catalog = self.draft.entities.get("catalog")
             if not catalog:
@@ -997,6 +1053,7 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
             "include_image": job.get("include_image", True),
             "context_sha": context_sha,
             "folder": folder,
+            **({"cancel_file": Path(job["cancel_file"])} if job.get("cancel_file") else {}),
         }
         self.process = QProcess(self)
         self.process.setProgram(worker_program())
@@ -1150,6 +1207,17 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
             if job["operation"] == "symbol-card":
                 self.statusBar().showMessage("符号速查卡已导出；绑定与当前任务快照一致")
                 return
+            if job["operation"] == "commerce-export":
+                receipt = result["result"]
+                if job["project_id"] == self.draft.project_id:
+                    self.draft.entities[f"export:{receipt['job_id']}"] = receipt
+                    self.dirty = True
+                    self.update_document_state()
+                self.statusBar().showMessage(
+                    f"商品素材已完成 {receipt['files']} 张，复用 {receipt['reused']}；"
+                    "待人工外观检查"
+                )
+                return
             same = (
                 job["project_id"] == self.draft.project_id
                 and result["base_sha"] == self.design.content_sha
@@ -1165,6 +1233,7 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
                 self.log.append(f"旧分支候选已保留：{job['output']}；当前母版未更改")
                 return
             if job["operation"] == "plan":
+                self.statusBar().showMessage("分页计划已完成，正在查看实际布局")
                 self.preview_dialog = PagePreview(self, result["result"])
                 self.preview_dialog.exec()
                 self.preview_dialog = None
@@ -1172,6 +1241,7 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
             if job["operation"] == "preview":
                 if self.preview_dialog:
                     self.preview_dialog.show_result(result["result"])
+                self.statusBar().showMessage("查图页预览已完成并核对针格")
                 return
             if job["operation"] == "quality":
                 report = result["result"]
@@ -1179,9 +1249,15 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
                 self.dirty = True
                 self.update_document_state()
                 self.show_quality(report)
+                self.statusBar().showMessage("母版数字检查已完成；仍需人工审查")
                 return
             if job["operation"] == "showcase-preview":
                 self.show_simulation(result["result"])
+                self.statusBar().showMessage("母版模拟预览已完成")
+                return
+            if job["operation"] == "commerce-preview":
+                self.show_commerce_preview(result["result"])
+                self.statusBar().showMessage("商品预览已完成；场景为示意，主体来自母版模拟")
                 return
             if job["operation"] == "analyze":
                 self.ai_result.setPlainText(
@@ -1270,7 +1346,7 @@ class Workbench(LocalFeatures, SymbolFeatures, BriefFeatures, TaskFeatures, QMai
     def cancel_job(self):
         if not self.process or self.process.state() == QProcess.ProcessState.NotRunning:
             return
-        if self.job["operation"] in {"export", "batch"}:
+        if self.job["operation"] in {"export", "batch", "commerce-export"}:
             atomic_write(self.job["cancel_file"], b"cancel")
             self.log.append("已请求安全取消，等待当前文件写入/核验结束")
         elif self.job["operation"] == "analyze":

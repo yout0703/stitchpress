@@ -16,6 +16,8 @@ dependencies = [
   "defusedxml>=0.7,<1",
   "keyring>=25,<26",
   "qtawesome>=1.4,<2",
+  "tifffile>=2025.5,<2027",
+  "imagecodecs>=2025.3,<2027",
 ]
 
 [project.scripts]
