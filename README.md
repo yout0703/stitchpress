@@ -16,7 +16,7 @@ QT_QPA_PLATFORM=offscreen uv run pytest -q
 uv run --group build python tools/build_desktop.py
 ```
 
-Mac本机试用应用生成于 `dist/macos/StitchPress.app`。开发样本和检查留底在 `reports/local/`；安装包及客户资源不推送到Git。
+Mac本机通过PyInstaller构建，试用应用生成于 `dist/macos/StitchPress.app`。开发样本和检查留底在 `reports/local/`；安装包及客户资源不推送到Git。
 
 使用环境补充（2026-11-11）：客户目前只有Windows；我们主要在macOS开发调试。因此以Windows为客户交付与体验验收主平台，macOS版本用于日常开发、调试和跨端核对，保留此前两个平台可运行版本的目标。客户尚未提出macOS商业使用需求。
 

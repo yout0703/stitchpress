@@ -31,6 +31,7 @@ dev = [
 build = [
     "nuitka==4.1.1",
     "ordered-set>=4",
+    "pyinstaller>=6.16,<7",
     "zstandard>=0.23",
 ]
 

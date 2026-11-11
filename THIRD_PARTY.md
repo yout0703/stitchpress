@@ -9,9 +9,9 @@
 
 ## 程序库
 
-PySide6/Qt、Pillow/LittleCMS/libtiff、NumPy、pypdf、openpyxl、defusedxml、keyring均为运行依赖；Nuitka为本机构建工具，pytest/pytest-qt/ruff/PDFium为开发检查工具。源码中不附带参考EXE的程序或美术资源。
+PySide6/Qt、Pillow/LittleCMS/libtiff、NumPy、pypdf、openpyxl、defusedxml、keyring均为运行依赖；PyInstaller为当前Mac构建工具、Nuitka为保留试验工具，pytest/pytest-qt/ruff/PDFium为开发检查工具。源码中不附带参考EXE的程序或美术资源。
 
-Qt 6.12部署配置当前指定Nuitka 4.1.1，本地构建据此锁定；其他平台仍需各自构建和验收。仓库中的构建脚本不构成商用发行许可检查完成的声明。
+Qt 6.12部署配置指定的Nuitka 4.1.1已做试验，但未通过中文安装目录迁移验证；Mac当前改用PyInstaller 6.22.3。其他平台仍需各自构建和验收。仓库中的构建脚本不构成商用发行许可检查完成的声明。
 
 ## 客户资源
 

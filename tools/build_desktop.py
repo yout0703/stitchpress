@@ -1,5 +1,6 @@
 """Native host build, never claim Windows cross-compilation from macOS."""
 
+import argparse
 import platform
 import subprocess
 import sys
@@ -9,9 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", choices=("pyinstaller", "nuitka"), default="pyinstaller")
+    args = parser.parse_args()
     if platform.system() not in {"Darwin", "Windows"}:
         raise SystemExit("Only macOS/Windows native builds are currently planned")
-    output = ROOT / "dist" / ("macos" if sys.platform == "darwin" else "windows")
+    host = "macos" if sys.platform == "darwin" else "windows"
+    output = ROOT / "dist" / (host if args.backend == "pyinstaller" else "nuitka-" + host)
     output.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable,
@@ -40,6 +45,25 @@ def main():
             "--product-version=0.1.0.0",
         ]
     command += ["tools/StitchPress.py"]
+    if args.backend == "pyinstaller":
+        command = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--onedir",
+            "--windowed",
+            "--name=StitchPress",
+            f"--paths={ROOT / 'src'}",
+            f"--add-data={ROOT / 'src' / 'stitchpress' / 'resources'}:stitchpress/resources",
+            "--collect-submodules=stitchpress",
+            f"--distpath={output}",
+            f"--workpath={ROOT / 'build' / ('pyinstaller-' + host)}",
+            f"--specpath={ROOT / 'build' / 'spec'}",
+        ]
+        if sys.platform == "darwin":
+            command += ["--osx-bundle-identifier=com.stitchpress.desktop"]
+        command += ["tools/StitchPress.py"]
     with (output / "build.log").open("w", encoding="utf-8") as log:
         result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
     print(f"exit_code={result.returncode}; log={output / 'build.log'}")
