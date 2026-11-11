@@ -19,6 +19,14 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path) -> str:
+    result = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            result.update(chunk)
+    return result.hexdigest()
+
+
 def symbol_key(external_id: int | str) -> str:
     if type(external_id) is int:
         return f"int:{external_id}"

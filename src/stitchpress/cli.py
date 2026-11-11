@@ -19,12 +19,32 @@ def main(argv=None):
     demo.add_argument("--colors", type=int, default=8)
     inspect = sub.add_parser("inspect")
     inspect.add_argument("project", type=Path)
+    for command in ("check", "plan"):
+        local = sub.add_parser(command)
+        local.add_argument("project", type=Path)
+    exchange = sub.add_parser("oxs")
+    exchange.add_argument("project", type=Path)
+    exchange.add_argument("output", type=Path)
+    batch = sub.add_parser("batch-export")
+    batch.add_argument("manifest", type=Path)
+    batch.add_argument("--work", type=Path, required=True)
+    batch.add_argument("--cache", type=Path)
+    batch.add_argument("--resume", action="store_true")
+    batch.add_argument("--cancel-file", type=Path)
+    archive = sub.add_parser("zip")
+    archive.add_argument("directory", type=Path)
+    archive.add_argument("receipt", type=Path)
+    archive.add_argument("output", type=Path)
     export = sub.add_parser("export")
     export.add_argument("project", type=Path)
     export.add_argument("destination", type=Path)
     export.add_argument("--demo", action="store_true", help="演示模式；不具备正式生产资格")
     export.add_argument("--cancel-file", type=Path)
     export.add_argument("--work", type=Path, default=Path(".local/jobs"))
+    export.add_argument("--cache", type=Path, help="可复用核验产物目录；损坏缓存重新生成")
+    export.add_argument(
+        "--targets", help="补件目标：production,reference,pdf,counts,showcase,notes"
+    )
     resources = sub.add_parser("import-factory")
     for arg in ("profile", "manifest", "catalog", "output"):
         resources.add_argument(arg, type=Path)
@@ -39,7 +59,7 @@ def main(argv=None):
 def execute(args):
     from .app.fixtures import save_demo
     from .app.store import Project
-    from .core.models import Design, ReviewRecord
+    from .core.models import Design
 
     if args.command == "gui":
         from .app.desktop import main as desktop
@@ -91,33 +111,81 @@ def execute(args):
                 stitches=sum(design.counts),
                 master_sha=design.content_sha,
             )
-    elif args.command == "export":
-        from .app.export import export_package
-        from .core.layout import Fabric
-        from .core.resources import assign_symbols, library_from_assets, load_catalog
+    elif args.command == "check":
+        from .core.quality import inspect_design
 
         project = Project.decode(args.project.read_bytes())
+        data = inspect_design(Design.from_dict(project.entities["design"]))
+    elif args.command == "plan":
+        from .app.context import export_context
+        from .app.export import export_plan
+
+        context = export_context(Project.decode(args.project.read_bytes()))
+        _, _, data = export_plan(
+            context["design"],
+            context["library"],
+            context["mapping"],
+            context["fabric"],
+            context["reference"],
+            code=context["code"],
+            font_data=context["font_data"],
+        )
+    elif args.command == "oxs":
+        from .core.importers import export_oxs, import_oxs
+        from .platform.files import atomic_write
+
+        if args.output.exists():
+            raise StitchPressError("目标OXS已存在，请另存版本")
+        project = Project.decode(args.project.read_bytes())
         design = Design.from_dict(project.entities["design"])
-        library = library_from_assets(project.entities["library"], project.assets)
-        mapping = project.entities.get("mapping") or assign_symbols(design, library)
-        review_data = project.entities.get("freeze")
-        if review_data:
-            review_data["detail_regions"] = tuple(tuple(r) for r in review_data["detail_regions"])
-        review = ReviewRecord(**review_data) if review_data else None
-        catalog_record = project.entities.get("catalog")
-        catalog = load_catalog(project.assets[catalog_record["asset"]]) if catalog_record else ()
+        payload = export_oxs(design)
+        actual = import_oxs(payload)
+        if actual.labels != design.labels or [(c.brand, c.code, c.rgb) for c in actual.palette] != [
+            (c.brand, c.code, c.rgb) for c in design.palette
+        ]:
+            raise StitchPressError("OXS反读不符")
+        atomic_write(args.output, payload)
+        data = {
+            "saved": str(args.output),
+            "master_sha": design.content_sha,
+            "full_cross_only": True,
+            "external_interoperability": "not_verified",
+        }
+    elif args.command == "batch-export":
+        from .app.jobs import run_batch
+
+        state = run_batch(
+            args.manifest,
+            args.work,
+            cache=args.cache,
+            resume=args.resume,
+            cancel=lambda: bool(args.cancel_file and args.cancel_file.exists()),
+            progress=lambda event: print(json.dumps(event), flush=True),
+        )
+        data = {
+            "status": state["status"],
+            "completed": sum(j["status"] == "completed" for j in state["jobs"]),
+            "total": len(state["jobs"]),
+            "work": str(args.work),
+        }
+    elif args.command == "zip":
+        from .app.export import zip_package
+
+        data = zip_package(
+            args.directory, args.output, receipt=json.loads(args.receipt.read_bytes())
+        )
+    elif args.command == "export":
+        from .app.context import export_context
+        from .app.export import export_package
+
+        project = Project.decode(args.project.read_bytes())
         result = export_package(
-            design=design,
-            library=library,
-            mapping=mapping,
-            fabric=Fabric(**project.entities["fabric"]),
-            code=project.entities["metadata"]["code"],
-            title=project.entities["metadata"]["title"],
+            **export_context(project),
             destination=args.destination,
             work=args.work,
-            review=review,
-            catalog=catalog,
             demo=args.demo,
+            cache_root=args.cache,
+            targets=frozenset(args.targets.split(",")) if args.targets else None,
             cancel=lambda: bool(args.cancel_file and args.cancel_file.exists()),
             progress=lambda event: print(json.dumps(event), flush=True),
         )
@@ -125,7 +193,7 @@ def execute(args):
     else:
         return 2
     print(json.dumps(data, ensure_ascii=False, indent=2), flush=True)
-    return 0
+    return 2 if data.get("status") in {"partial", "cancelled", "failed"} else 0
 
 
 if __name__ == "__main__":

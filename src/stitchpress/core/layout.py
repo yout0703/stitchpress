@@ -30,6 +30,7 @@ class Fabric:
     nominal_ct: str = "14"
     source: str = "factory-v10-actual-pitch"
     dpi: int = 300
+    margin_unit: str = "cm"
 
     def __post_init__(self):
         for name in ("sx", "sy", "left", "top", "right", "bottom", "nominal_ct"):
@@ -38,6 +39,8 @@ class Fabric:
                 raise StitchPressError(f"{name}必须为合法正格距/布号或非负余量")
         if type(self.dpi) is not int or not 72 <= self.dpi <= 1200:
             raise StitchPressError("试验版DPI支持72–1200整数")
+        if self.margin_unit not in {"cm", "mm", "cells"}:
+            raise StitchPressError("留白单位须为cm/mm/格数")
 
     @classmethod
     def theoretical(cls, ct: str) -> "Fabric":

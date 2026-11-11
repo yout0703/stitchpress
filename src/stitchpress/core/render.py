@@ -6,12 +6,12 @@ from decimal import Decimal
 from math import ceil
 from pathlib import Path
 
-from PIL import Image, ImageCms, ImageDraw
+from PIL import Image, ImageChops, ImageCms, ImageDraw
 
 from .errors import ResourceError, StitchPressError
 from .layout import Fabric, Page, PagePlan, page_coordinates, physical_layout, px
 from .models import Design
-from .resources import SymbolLibrary, load_font
+from .resources import SymbolLibrary, load_font, natural_color_key
 
 WHITE = (0, 0, 0, 0)
 BLACK = (255, 255, 255, 255)
@@ -25,6 +25,7 @@ class CellRaster:
     xs: tuple[int, ...]
     ys: tuple[int, ...]
     inset: int
+    style: str = "symbols"
 
 
 class Renderer:
@@ -35,9 +36,11 @@ class Renderer:
         mapping: dict[str, str],
         fabric: Fabric,
         code: str = "",
+        font_data: bytes | None = None,
     ):
         self.design, self.library, self.mapping, self.fabric = design, library, mapping, fabric
         self.code = code
+        self.font_data = font_data
         used = {c.key for c, n in zip(design.palette, design.counts, strict=True) if n}
         if set(mapping) != used or len(set(mapping.values())) != len(mapping):
             raise StitchPressError("映射必须覆盖且仅覆盖每种有效线色，符号不能复用")
@@ -46,9 +49,15 @@ class Renderer:
         self.layout = physical_layout(design.width, design.height, fabric)
         self.tiles = {s.key: s.image() for s in library.symbols}
         self.cache = {}
-        self.entries = [
-            (i, c) for i, (c, n) in enumerate(zip(design.palette, design.counts, strict=True)) if n
-        ]
+        self.color_cache = {}
+        self.entries = sorted(
+            [
+                (i, c)
+                for i, (c, n) in enumerate(zip(design.palette, design.counts, strict=True))
+                if n
+            ],
+            key=lambda entry: natural_color_key(entry[1]),
+        )
 
     def canvas(self, size):
         if size[0] * size[1] > MAX_RENDER_PIXELS:
@@ -57,7 +66,7 @@ class Renderer:
 
     def text(self, image, xy, text: str, size: int, anchor="lt"):
         factor = self.fabric.dpi / 300
-        font = load_font(ceil(size * factor))
+        font = load_font(ceil(size * factor), self.font_data)
         if any(ord(c) > 127 for c in text):
             missing = bytes(font.getmask("\U0010ffff"))
             if any(not c.isspace() and bytes(font.getmask(c)) == missing for c in text):
@@ -76,6 +85,29 @@ class Renderer:
             self.cache[(key, w, h)] = self.tiles[key].resize((w, h), Image.Resampling.NEAREST)
         return self.cache[(key, w, h)]
 
+    def reference_tile(self, index, w, h, style):
+        tile = self.tile(index, w, h)
+        if style == "symbols":
+            return tile
+        key = index, w, h, style
+        if key not in self.color_cache:
+            rgb = self.design.palette[index].rgb
+            if style == "pale":
+                rgb = tuple(round(v * 0.22 + 255 * 0.78) for v in rgb)
+            background = Image.new("RGB", (1, 1), rgb)
+            if self.library.icc:
+                background = ImageCms.profileToProfile(
+                    background,
+                    ImageCms.createProfile("sRGB"),
+                    ImageCms.ImageCmsProfile(io.BytesIO(self.library.icc)),
+                    outputMode="CMYK",
+                    renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                )
+            else:
+                background = background.convert("CMYK")  # Explicit demo-only fallback.
+            self.color_cache[key] = ImageChops.lighter(background.resize((w, h)), tile)
+        return self.color_cache[key]
+
     def cells(self, image: Image.Image, raster: CellRaster):
         x0, y0, x1, y1 = raster.window
         inset = raster.inset
@@ -89,14 +121,19 @@ class Renderer:
                     if min(w, h) < 3:
                         raise ResourceError("当前格距不足以容纳可检查符号")
                     image.paste(
-                        self.tile(index, w, h), (raster.xs[x] + inset, raster.ys[y] + inset)
+                        self.reference_tile(index, w, h, raster.style),
+                        (raster.xs[x] + inset, raster.ys[y] + inset),
                     )
 
     def legend_entry_width(self) -> int:
-        font = load_font(39)
+        if not self.entries:
+            raise StitchPressError("母版没有有效针格，无法生成查图图例")
+        font = load_font(39, self.font_data)
         return max(345, ceil(max(font.getlength(c.code) for _, c in self.entries)) + 185)
 
-    def reference(self, page: Page, plan: PagePlan):
+    def reference(self, page: Page, plan: PagePlan, *, style="symbols", minor_grid=True):
+        if style not in {"symbols", "pale", "color"}:
+            raise StitchPressError("未知查图样式")
         image = self.canvas(plan.paper_px)
         draw = ImageDraw.Draw(image)
         factor = self.fabric.dpi / 300
@@ -105,18 +142,22 @@ class Renderer:
             return ceil(n * factor)
 
         xs, ys = page_coordinates(self.layout, page, plan)
-        raster = CellRaster(page.visible, xs, ys, sc(2))
+        raster = CellRaster(page.visible, xs, ys, sc(2), style)
         self.cells(image, raster)
         x0, y0, x1, y1 = page.visible
         if xs[-1] >= image.width - sc(50) or ys[-1] >= plan.legend_top - sc(50):
             raise ResourceError("重叠窗口/针格超出版式可用区域")
         for j, x in enumerate(xs):
+            if not minor_grid and (x0 + j) % 10:
+                continue
             draw.line(
                 (x, ys[0], x, ys[-1]), fill=BLACK, width=sc(3) if (x0 + j) % 10 == 0 else sc(1)
             )
             if (x0 + j) % 10 == 0:
                 self.text(image, (x, ys[0] - sc(30)), str(x0 + j), 36, "mb")
         for j, y in enumerate(ys):
+            if not minor_grid and (y0 + j) % 10:
+                continue
             draw.line(
                 (xs[0], y, xs[-1], y), fill=BLACK, width=sc(3) if (y0 + j) % 10 == 0 else sc(1)
             )
@@ -152,7 +193,8 @@ class Renderer:
         self.text(
             image,
             (sc(150), ruler_y + sc(22)),
-            f"{ruler_cells} cells = {Decimal(self.fabric.sx) * ruler_cells} cm (1:1)",
+            f"{ruler_cells} cells = {Decimal(self.fabric.sx) * ruler_cells} cm "
+            f"| Print {plan.scale}:1",
             32,
         )
         self.text(
@@ -200,7 +242,7 @@ class Renderer:
         self.text(image, (xs[0], y + sc(22)), label, 32)
         # Fit measured entries into free perimeter. Never increase fabric or shrink text.
         row_h = sc(96)
-        max_code = max(load_font(sc(56)).getlength(c.code) for _, c in self.entries)
+        max_code = max(load_font(sc(56), self.font_data).getlength(c.code) for _, c in self.entries)
         entry_w = sc(220) + ceil(max_code)
         rects = [
             (xs[-1] + sc(65), ys[0], image.width - sc(30), image.height - sc(60)),
@@ -241,7 +283,7 @@ class Renderer:
                 )
                 got = image.crop(box)
                 expected = (
-                    self.tile(index, got.width, got.height)
+                    self.reference_tile(index, got.width, got.height, raster.style)
                     if index >= 0
                     else Image.new("CMYK", got.size, WHITE)
                 )

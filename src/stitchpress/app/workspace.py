@@ -97,6 +97,49 @@ def build_workspace(w, canvas_type):
         file_menu.addAction(action)
         w.addAction(action)
     file_menu.addSeparator()
+    for title, actions in (
+        (
+            "制版与查图",
+            (
+                ("尺寸、查图与预设…", w.specification_settings),
+                ("查图分页与原像素预览…", w.plan_preview),
+                ("母版数字检查…", w.inspect_master),
+                ("导出全针 OXS…", w.export_oxs_file),
+            ),
+        ),
+        (
+            "符号与资源",
+            (
+                ("符号库管理…", w.manage_symbols),
+                ("重新自动分配符号…", w.reassign_symbols),
+                ("导出符号速查卡…", w.export_symbol_card),
+                ("导入源图输入 ICC…", w.import_input_icc),
+                ("清除源图输入 ICC 覆盖", w.clear_input_icc),
+                ("清除当前蒙版标注", w.clear_annotations),
+            ),
+        ),
+        (
+            "版本与恢复",
+            (
+                ("恢复未保存草稿…", w.recover_draft),
+                ("恢复保存历史…", w.restore_version),
+            ),
+        ),
+        (
+            "批量与交付",
+            (
+                ("批量导出已保存作品…", w.batch_export),
+                ("按需导出补件…", w.export_selected),
+                ("恢复本机导出批次…", w.resume_batch),
+                ("登记交付/试印/洗水验收…", w.delivery_review),
+                ("压缩已核验交付为 ZIP…", w.zip_delivery),
+            ),
+        ),
+    ):
+        menu = file_menu.addMenu(title)
+        for text, callback in actions:
+            menu.addAction(text, callback)
+    file_menu.addSeparator()
     file_menu.addAction("AI 服务配置…", w.ai_settings)
     file_button.setMenu(file_menu)
     hl.addWidget(file_button)
@@ -263,6 +306,17 @@ def build_workspace(w, canvas_type):
     dl.addWidget(w.patch_button)
     w.undo_button = button(w, "撤销", w.undo_patch, "mdi6.undo-variant")
     dl.addWidget(w.undo_button)
+    mask = QToolButton()
+    mask.setText("蒙版")
+    mask.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    mask_menu = QMenu(mask)
+    mask_menu.addAction("标注主体有针（下次转换）", lambda: w.annotate_region("subject"))
+    mask_menu.addAction("标注负空间留空（下次转换）", lambda: w.annotate_region("blank"))
+    mask_menu.addAction("保护选区（禁止局部改针）", lambda: w.annotate_region("protected"))
+    mask_menu.addSeparator()
+    mask_menu.addAction("清除当前蒙版（旧记录保留）", w.clear_annotations)
+    mask.setMenu(mask_menu)
+    dl.addWidget(mask)
     note = label("区域外保持不变\n白色有针，留空不绣", "muted")
     dl.addWidget(note)
     dw.addWidget(dock)
@@ -306,6 +360,7 @@ def build_inspector(w):
         item.editingFinished.connect(w.apply_fields)
     w.summary = label("", "muted", True)
     pl.addWidget(w.summary)
+    pl.addWidget(button(w, "尺寸、查图与预设…", w.specification_settings, "mdi6.tune-variant"))
     source = QGroupBox("图片 → 针格候选")
     sf = QFormLayout(source)
     sf.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -332,6 +387,9 @@ def build_inspector(w):
     sf.addRow(button(w, "选择图片…", w.choose_image, "mdi6.image-outline"))
     sf.addRow(button(w, "本地转换候选", w.convert, role="outline"))
     pl.addWidget(source)
+    for field in (w.grid_w, w.grid_h, w.color_limit):
+        field.valueChanged.connect(w.capture_conversion_options)
+    w.alpha.currentIndexChanged.connect(w.capture_conversion_options)
     pl.addStretch()
     area.setWidget(panel)
     return area
@@ -357,6 +415,18 @@ def build_ai(w):
     sl.addStretch()
     sl.addWidget(button(w, "配置 AI 服务", w.ai_settings, "mdi6.cog-outline"))
     al.addWidget(service)
+    brief_card, brief_layout = frame("pageCard")
+    brief_layout.addWidget(
+        button(w, "设计要求与输入路径…", w.edit_brief, "mdi6.clipboard-text-outline")
+    )
+    w.brief_summary = label("", "muted", True)
+    brief_layout.addWidget(w.brief_summary)
+    al.addWidget(brief_card)
+    history_row = QHBoxLayout()
+    history_row.addWidget(button(w, "调用计划…", w.ai_plan, "mdi6.counter"))
+    history_row.addWidget(button(w, "任务记录与恢复…", w.task_inbox, "mdi6.history"))
+    history_row.addStretch()
+    al.addLayout(history_row)
     al.addWidget(label("本次设计要求", "document"))
     w.prompt = QTextEdit()
     w.prompt.setPlaceholderText("描述必须保留的对象、构图、负空间和允许简化的部分……")
@@ -366,6 +436,8 @@ def build_ai(w):
     w.ai_include_image = QCheckBox("本次附带当前对照图片，发送到已配置的 AI 服务")
     w.ai_include_image.setChecked(True)
     al.addWidget(w.ai_include_image)
+    w.prompt.textChanged.connect(w.capture_creative_prompt)
+    w.ai_include_image.toggled.connect(w.capture_creative_prompt)
     row = QHBoxLayout()
     row.addWidget(button(w, "分析设计要求", w.run_ai, "mdi6.creation", "primary"))
     row.addWidget(label("单次调用 · 使用你配置的账号计费", "muted"))
@@ -377,6 +449,7 @@ def build_ai(w):
     w.ai_result.setMinimumHeight(160)
     w.ai_result.setPlaceholderText("尚未调用。模型建议不会自动修改针格或冻结母版。")
     al.addWidget(w.ai_result, 1)
+    al.addWidget(button(w, "将最近分析填入设计要求草稿…", w.analysis_to_brief, role="outline"))
     al.addWidget(label("图像生成 / 编辑：当前仅支持保存配置，待供应商接口接入。", "muted", True))
     return area
 
@@ -387,18 +460,26 @@ def build_export(w):
     cl.addWidget(label("N + 6 整包", "heading"))
     cl.addWidget(
         label(
-            "生产 TIFF  /  A4 查图  /  PDF  /  配线 Excel  /  X 模拟  /  中英文说明", "muted", True
+            "生产 TIFF  /  查图  /  PDF  /  配线 Excel  /  母版模拟  /  中英文说明", "muted", True
         )
     )
     w.export_summary = label("", "document", True)
     cl.addWidget(w.export_summary)
     w.export_review = label("", "badge", True)
     cl.addWidget(w.export_review)
+    configure_row = QHBoxLayout()
+    configure_row.addWidget(button(w, "尺寸与查图设置", w.specification_settings))
+    configure_row.addWidget(button(w, "分页与原像素预览", w.plan_preview))
+    configure_row.addWidget(button(w, "母版数字检查", w.inspect_master))
+    configure_row.addWidget(button(w, "展示模拟预览", w.preview_simulation))
+    configure_row.addStretch()
+    cl.addLayout(configure_row)
     w.demo_mode = QCheckBox("演示模式（不能作为正式生产验收）")
     w.demo_mode.setChecked(True)
     cl.addWidget(w.demo_mode)
     export_row = QHBoxLayout()
     export_row.addWidget(button(w, "选择位置并导出整包", w.export, "mdi6.tray-arrow-up", "primary"))
+    export_row.addWidget(button(w, "按需导出补件…", w.export_selected))
     export_row.addStretch()
     cl.addLayout(export_row)
     el.addWidget(card)

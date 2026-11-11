@@ -21,6 +21,8 @@ class ThreadColor:
             isinstance(v, str) and v for v in (self.brand, self.code, self.catalog_revision)
         ):
             raise StitchPressError("线材品牌、原代码和目录修订必须为非空文本")
+        if not isinstance(self.name, str):
+            raise StitchPressError("线色名称必须为文本")
         if len(self.rgb) != 3 or any(type(c) is not int or not 0 <= c <= 255 for c in self.rgb):
             raise StitchPressError("RGB必须为三个0–255整数")
 
@@ -50,7 +52,11 @@ class Design:
             raise StitchPressError("针格宽高必须为正整数")
         if self.width * self.height > MAX_CELLS:
             raise StitchPressError(f"试验版暂限{MAX_CELLS}个总格，不能静默缩图")
-        if not self.revision_id or self.stitch_type != "full_cross":
+        if (
+            not isinstance(self.revision_id, str)
+            or not self.revision_id
+            or self.stitch_type != "full_cross"
+        ):
             raise StitchPressError("当前只支持明确声明的全针母版")
         if self.origin not in {"imported", "converted", "patched"}:
             raise StitchPressError("未知母版来源")
@@ -66,6 +72,10 @@ class Design:
             raise StitchPressError("非法色板索引，只有-1表示无针")
         if len({c.key for c in self.palette}) != len(self.palette):
             raise StitchPressError("母版含重复线材身份，必须明确修订合并")
+        if len(self.palette) > 512:
+            raise StitchPressError("色板超过512色数据上限")
+        if any(len(p) != 2 or not all(isinstance(v, str) for v in p) for p in self.provenance):
+            raise StitchPressError("母版来源须为具名文本记录")
 
     @property
     def counts(self) -> tuple[int, ...]:
@@ -137,6 +147,10 @@ class ReviewRecord:
     notes: str
 
     def validate(self, design: Design) -> None:
+        if not isinstance(self.reviewer, str) or not isinstance(self.notes, str):
+            raise StitchPressError("审核人和说明须为文本")
+        if any(type(v) is not bool for v in (self.overall, self.negative_space, self.source_match)):
+            raise StitchPressError("审核勾选须为明确布尔值")
         if self.target_sha != design.content_sha or not self.reviewer.strip():
             raise StitchPressError("审核必须对应当前母版和具名审核人")
         if not all((self.overall, self.negative_space, self.source_match)):
@@ -144,6 +158,8 @@ class ReviewRecord:
         if len(set(self.detail_regions)) < 2:
             raise StitchPressError("冻结前至少审查两处不同局部")
         for x0, y0, x1, y1 in self.detail_regions:
+            if any(type(v) is not int for v in (x0, y0, x1, y1)):
+                raise StitchPressError("局部审核坐标须为整数")
             if not 0 <= x0 < x1 <= design.width or not 0 <= y0 < y1 <= design.height:
                 raise StitchPressError("局部审核坐标越界")
 

@@ -13,6 +13,8 @@ PySide6/Qt、Pillow/LittleCMS/libtiff、NumPy、pypdf、openpyxl、defusedxml、
 
 2026-11-11新增QtAwesome/QtPy，用于高DPI图标；界面使用其Material Design Icons 6线性图标。QtAwesome/QtPy的许可及随库图标字体通知需随安装资源保留；构建脚本显式收集QtAwesome数据。界面字体使用操作系统已安装的PingFang SC / Segoe UI及中文回退，不复制系统字体。
 
+标准下拉箭头与勾选图标从QtAwesome的MDI6字体渲染为32px PNG，未改动图标形状；来源与许可见[Pictogrammers v6.9.96](https://github.com/Templarian/MaterialDesign-Webfont/blob/v6.9.96/LICENSE)，随包通知存于resources/icons/Pictogrammers-LICENSE.txt、QtAwesome-LICENSE.txt和QtPy-LICENSE.txt。上述只涉及标准控件图标，不包含参考APP资源。
+
 Qt 6.12部署配置指定的Nuitka 4.1.1已做试验，但未通过中文安装目录迁移验证；Mac当前改用PyInstaller 6.22.3。其他平台仍需各自构建和验收。仓库中的构建脚本不构成商用发行许可检查完成的声明。
 
 ## 客户资源

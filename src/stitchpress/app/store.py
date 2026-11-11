@@ -60,6 +60,9 @@ class Project:
         return digest(self.entities.get(key))
 
     def encode(self) -> bytes:
+        from .validation import validate_entities
+
+        validate_entities(self.entities, self.assets)
         for name in self.assets:
             _safe_member(name)
             if name == "manifest.json":
@@ -102,8 +105,33 @@ class Project:
                         raise StitchPressError("作品含重复/大小写冲突/链接/目录记录")
                     seen.add(key)
                 manifest = json.loads(archive.read("manifest.json"))
+                required = {
+                    "schema_version",
+                    "project_id",
+                    "commit_seq",
+                    "entities",
+                    "events",
+                    "assets",
+                }
+                if not isinstance(manifest, dict) or set(manifest) != required:
+                    raise StitchPressError("作品清单含缺失或未知字段，不能不完整写回")
                 if manifest["schema_version"] != 1:
                     raise StitchPressError("未来或不支持的作品版本；不能写回旧格式")
+                if (
+                    not isinstance(manifest["project_id"], str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", manifest["project_id"])
+                    or not isinstance(manifest["assets"], dict)
+                    or not all(
+                        isinstance(n, str)
+                        and isinstance(s, str)
+                        and re.fullmatch(r"[a-f0-9]{64}", s)
+                        for n, s in manifest["assets"].items()
+                    )
+                    or not isinstance(manifest["events"], list)
+                    or not all(isinstance(e, str) and e for e in manifest["events"])
+                    or len(set(manifest["events"])) != len(manifest["events"])
+                ):
+                    raise StitchPressError("作品身份、资源索引或事件记录无效")
                 assets = {name: archive.read(name) for name in manifest["assets"]}
                 if {i.filename for i in infos} != {"manifest.json", *assets}:
                     raise StitchPressError("作品包含未登记文件")
@@ -112,6 +140,9 @@ class Project:
                         raise StitchPressError(f"作品资源校验失败：{name}")
                 if type(manifest["commit_seq"]) is not int or manifest["commit_seq"] < 0:
                     raise StitchPressError("作品提交序列无效")
+                from .validation import validate_entities
+
+                validate_entities(manifest["entities"], assets)
                 return cls(
                     manifest["project_id"],
                     manifest["commit_seq"],
@@ -119,7 +150,16 @@ class Project:
                     assets,
                     manifest["events"],
                 )
-        except (KeyError, TypeError, json.JSONDecodeError, BadZipFile, UnicodeDecodeError) as exc:
+        except StitchPressError:
+            raise
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            BadZipFile,
+            UnicodeDecodeError,
+            RecursionError,
+        ) as exc:
             raise StitchPressError("作品容器字段损坏或不完整") from exc
 
 
@@ -146,6 +186,13 @@ class Coordinator:
     def close(self):
         self._lock.__exit__(None, None, None)
 
+    @property
+    def history_directory(self):
+        return self.path.parent / ".stitchpress-history" / self.project.project_id
+
+    def versions(self):
+        return sorted(self.history_directory.glob("*.stitchpress"), reverse=True)
+
     def commit(
         self,
         *,
@@ -156,6 +203,8 @@ class Coordinator:
         event_id: str | None = None,
     ) -> Project:
         with self._mutex:
+            if type(expected_seq) is not int or expected_seq < 0:
+                raise ConflictError("提交序列须为非负整数")
             disk_sha = sha256(self.path.read_bytes()) if self.path.exists() else None
             if disk_sha != self._disk_sha:
                 raise ConflictError("作品被外部修改，已停止写回；请另存当前草稿")
@@ -173,11 +222,25 @@ class Coordinator:
                 if name in updated.assets and updated.assets[name] != content:
                     raise ConflictError("不可原地覆盖已保存资源，请创建新内容地址")
                 updated.assets[name] = content
-            updated.entities.update(copy.deepcopy(changes))
+            for key, value in copy.deepcopy(changes).items():
+                if value is None:
+                    updated.entities.pop(key, None)
+                else:
+                    updated.entities[key] = value
             updated.commit_seq += 1
             if event_id:
                 updated.events.append(event_id)
             payload = updated.encode()
+            previous = self.path.read_bytes() if self.path.exists() else None
+            if (sha256(previous) if previous is not None else None) != self._disk_sha:
+                raise ConflictError("校验期间作品被外部修改，已停止保存")
+            if previous is not None:
+                backup = (
+                    self.history_directory
+                    / f"{self.project.commit_seq:08d}-{self._disk_sha}.stitchpress"
+                )
+                if not backup.exists():
+                    atomic_write(backup, previous)
             atomic_write(self.path, payload)
             self._disk_sha = sha256(payload)
             self.project = updated

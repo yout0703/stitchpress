@@ -97,10 +97,11 @@ def convert_image(
     options: ConversionOptions,
     blank_mask: np.ndarray | None = None,
     subject_mask: np.ndarray | None = None,
+    override_icc: bytes | None = None,
 ):
     if not catalog:
         raise StitchPressError("未选择线色目录")
-    normalized, record = normalize_image(data)
+    normalized, record = normalize_image(data, override_icc)
     sample = np.array(normalized.resize((options.width, options.height), Image.Resampling.BOX))
     alpha = sample[:, :, 3]
     if options.alpha_mode == "composite":

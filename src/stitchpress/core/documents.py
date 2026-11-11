@@ -18,6 +18,7 @@ from pypdf.generic import (
 
 from .errors import StitchPressError
 from .models import Design
+from .resources import natural_color_key
 
 
 def write_counts(design: Design, code: str, path: Path) -> dict:
@@ -27,7 +28,10 @@ def write_counts(design: Design, code: str, path: Path) -> dict:
     ws.append(["Customer Code", code])
     ws["B1"].data_type = "s"
     ws.append(["No.", "Brand", "DMC Code", "Color Name", "Stitches"])
-    entries = [(color, n) for color, n in zip(design.palette, design.counts, strict=True) if n]
+    entries = sorted(
+        [(color, n) for color, n in zip(design.palette, design.counts, strict=True) if n],
+        key=lambda entry: natural_color_key(entry[0]),
+    )
     for i, (color, n) in enumerate(entries, 1):
         ws.append([i, color.brand, color.code, color.name, n])
         ws.cell(i + 2, 3).data_type = "s"  # Also prevents formula injection via thread code.

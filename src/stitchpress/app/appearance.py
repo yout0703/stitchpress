@@ -1,6 +1,7 @@
 """Shared desktop tokens. Appearance never changes design or production colors."""
 
 import sys
+from pathlib import Path
 from string import Template
 
 import qtawesome as qta
@@ -58,7 +59,14 @@ def bind_icon(widget, name):
 
 
 def apply_appearance(app: QApplication, root, theme):
-    t = THEMES[theme]
+    icons = Path(__file__).parents[1] / "resources" / "icons"
+    t = {
+        **THEMES[theme],
+        **{
+            name.replace("-", "_"): (icons / f"{theme}-{name}.png").as_posix().replace('"', '\\"')
+            for name in ("chevron-down", "chevron-up", "check")
+        },
+    }
     app.setStyle("Fusion")
     font = QFont("PingFang SC" if sys.platform == "darwin" else "Segoe UI", 10)
     font.setFamilies([font.family(), "Microsoft YaHei UI", "Noto Sans CJK SC", "sans-serif"])
@@ -109,14 +117,18 @@ def apply_appearance(app: QApplication, root, theme):
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { color: $disabled; }
         QComboBox { padding-right: 22px; }
         QComboBox::drop-down { width: 21px; border: none; }
+        QComboBox::down-arrow { image: url("$chevron_down"); width: 13px; height: 13px; }
         QComboBox QAbstractItemView { background: $panel; color: $text;
             selection-background-color: $selected; selection-color: $text;
             border: 1px solid $line; }
         QSpinBox::up-button, QSpinBox::down-button { width: 17px; }
+        QSpinBox::up-arrow { image: url("$chevron_up"); width: 11px; height: 11px; }
+        QSpinBox::down-arrow { image: url("$chevron_down"); width: 11px; height: 11px; }
         QCheckBox { spacing: 8px; padding: 5px 0; }
         QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;
             border: 1px solid $muted; background: $raised; }
-        QCheckBox::indicator:checked { background: $accent; border: 4px solid $panel; }
+        QCheckBox::indicator:checked { background: $accent; border: 1px solid $accent;
+            image: url("$check"); }
         QTableWidget { background: $panel; alternate-background-color: $raised;
             border: none; gridline-color: $line; outline: none; }
         QTableWidget::item { padding: 4px; border-bottom: 1px solid $line; }
