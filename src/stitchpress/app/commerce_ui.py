@@ -18,8 +18,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
-    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -77,6 +78,10 @@ class CommerceDialog(QDialog):
         if hasattr(owner, "mark_reference_pending"):
             more.menu().triggered.connect(owner.mark_reference_pending)
         toolbar.addWidget(more)
+        photo = QPushButton("使用精选场景")
+        photo.setToolTip("将三个场景替换为客厅、卧室、书房；保留画作、相框和文字")
+        photo.clicked.connect(self.use_photo_scenes)
+        toolbar.addWidget(photo)
         layout.addLayout(toolbar)
         note = QLabel("先选模板，再核对整套图片。未应用的设置只用于本页预览，不影响作品导出。")
         note.setWordWrap(True)
@@ -84,27 +89,37 @@ class CommerceDialog(QDialog):
         tabs = self.tabs = QTabWidget()
         from .commerce_studio import PreviewBoard
 
-        mode_row = QHBoxLayout()
-        self.mode = QComboBox()
-        self.mode.addItems(["整套预览", "页面与样式设置"])
-        mode_row.addWidget(self.mode)
-        mode_row.addStretch()
-        edit_page = QPushButton("编辑当前页面")
-        edit_page.clicked.connect(self.edit_current_page)
-        mode_row.addWidget(edit_page)
-        layout.addLayout(mode_row)
-        self.views = QStackedWidget()
         self.board = PreviewBoard(self.snapshot, self)
-        self.views.addWidget(self.board)
-        self.views.addWidget(tabs)
-        self.mode.currentIndexChanged.connect(self.views.setCurrentIndex)
-        layout.addWidget(self.views, 1)
+        if hasattr(owner, "show_page"):
+            self.board.source_requested.connect(lambda: owner.show_page(3))
+        inspector = QWidget()
+        inspector.setObjectName("commerceInspector")
+        inspector.setMinimumWidth(280)
+        inspector.setMaximumWidth(390)
+        inspector_layout = QVBoxLayout(inspector)
+        inspector_layout.setContentsMargins(16, 0, 0, 0)
+        self.mode = QComboBox()
+        self.mode.setAccessibleName("商品设置分区")
+        self.mode.addItems(["场景一", "场景二", "场景三", "文字与样式", "输出尺寸", "方图内容"])
+        self.mode.currentIndexChanged.connect(tabs.setCurrentIndex)
+        tabs.currentChanged.connect(self.mode.setCurrentIndex)
+        tabs.tabBar().hide()
+        inspector_layout.addWidget(self.mode)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(tabs)
+        inspector_layout.addWidget(scroll, 1)
+        self.board.split.addWidget(inspector)
+        self.board.split.setSizes([160, 600, 320])
+        self.board.list.currentRowChanged.connect(lambda _: self.edit_current_page())
+        layout.addWidget(self.board, 1)
         self.scenes = []
         for i, saved in enumerate(self.saved.scenes):
             spec = SceneSettings(**saved)
             page = QWidget()
-            columns = QHBoxLayout(page)
-            columns.setSpacing(28)
+            columns = QVBoxLayout(page)
+            columns.setSpacing(12)
             left, right = QWidget(), QWidget()
             columns.addWidget(left, 1)
             columns.addWidget(right, 1)
@@ -123,7 +138,7 @@ class CommerceDialog(QDialog):
                 spin.setRange(0, 100)
                 spin.setValue(value)
             matcolor = QLineEdit(",".join(str(n) for n in spec.mat_color))
-            background = QLabel("已绑定作品背景" if spec.background_asset else "使用内置示意场景")
+            background = QLabel("已绑定作品背景" if spec.background_asset else "使用内置场景")
             controls = {
                 "scene": scene,
                 "frame": frame,
@@ -161,8 +176,8 @@ class CommerceDialog(QDialog):
             right_form.addRow(actions)
             tabs.addTab(page, f"场景 {i + 1}")
         style = QWidget()
-        style_columns = QHBoxLayout(style)
-        style_columns.setSpacing(28)
+        style_columns = QVBoxLayout(style)
+        style_columns.setSpacing(12)
         copy_panel, style_panel = QWidget(), QWidget()
         style_columns.addWidget(copy_panel, 1)
         style_columns.addWidget(style_panel, 1)
@@ -247,8 +262,25 @@ class CommerceDialog(QDialog):
         buttons.accepted.connect(self.validate_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        for form in tabs.findChildren(QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+            form.setVerticalSpacing(8)
+            form.setContentsMargins(6, 6, 6, 6)
+        for field in tabs.findChildren(QLineEdit):
+            field.setMinimumWidth(0)
+            field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.refresh_template_label()
         self.finished.connect(self.board.stop)
+
+    def use_photo_scenes(self):
+        for index, controls in enumerate(self.scenes):
+            controls["scene"].setCurrentIndex(9 + index)
+            controls["asset"] = None
+            controls["background"].setText("使用内置精选场景")
+            controls["fields"]["scale"].setText("1")
+            controls["fields"]["dx"].setText("0")
+            controls["fields"]["dy"].setText("0")
+        self.board.refresh()
 
     def snapshot(self):
         project = copy.deepcopy(self.owner.draft)
@@ -272,7 +304,7 @@ class CommerceDialog(QDialog):
             controls["mat_color"].setText(",".join(map(str, scene["mat_color"])))
             controls["asset"] = scene.get("background_asset")
             controls["background"].setText(
-                "已绑定作品背景" if controls["asset"] else "使用内置示意场景"
+                "已绑定作品背景" if controls["asset"] else "使用内置场景"
             )
         for key, field in self.text_fields.items():
             field.setText(getattr(value, key))
@@ -318,12 +350,11 @@ class CommerceDialog(QDialog):
         row = max(0, self.board.list.currentRow())
         target = TARGETS[row]
         content = (
-            self.values().squares[int(target[-1]) - 1]
+            self.squares[int(target[-1]) - 1].currentData()
             if target.startswith("square")
             else target.removeprefix("detail-")
         )
         self.tabs.setCurrentIndex(int(content[-1]) - 1 if content.startswith("scene-") else 3)
-        self.mode.setCurrentIndex(1)
 
     def make_personal(self):
         from .commerce_templates import preset_project
@@ -434,7 +465,7 @@ class CommerceDialog(QDialog):
 
     def reset_background(self, index):
         self.scenes[index]["asset"] = None
-        self.scenes[index]["background"].setText("使用内置示意场景")
+        self.scenes[index]["background"].setText("使用内置场景")
 
     @staticmethod
     def rgb(field):

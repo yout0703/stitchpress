@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QTableWidget,
@@ -68,8 +69,21 @@ class SpecificationDialog(QDialog):
         fabric_columns = QHBoxLayout(fabric_page)
         fabric_columns.setSpacing(28)
         dimensions, margins = QWidget(), QWidget()
-        fabric_columns.addWidget(dimensions, 1)
-        fabric_columns.addWidget(margins, 1)
+        settings = QWidget()
+        settings_layout = QVBoxLayout(settings)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.addWidget(dimensions)
+        settings_layout.addWidget(margins)
+        settings_layout.addStretch()
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setWidget(settings)
+        settings_scroll.setMinimumWidth(440)
+        fabric_columns.addWidget(settings_scroll, 1)
+        from .fabric_preview import FabricPreview
+
+        self.fabric_preview = FabricPreview()
+        fabric_columns.addWidget(self.fabric_preview, 1)
         form = QFormLayout(dimensions)
         heading = QLabel("画心尺寸")
         heading.setProperty("role", "sectionLabel")
@@ -98,6 +112,14 @@ class SpecificationDialog(QDialog):
         line.addWidget(theoretical)
         line.addStretch()
         form.addRow("名义布号 CT", line)
+        quick = QHBoxLayout()
+        for ct in (11, 14, 16, 18):
+            button = QPushButton(f"{ct} CT")
+            button.setToolTip("使用理论格距，不改变针数与留白")
+            button.clicked.connect(lambda _, value=ct: self.choose_ct(value))
+            quick.addWidget(button)
+        quick.addStretch()
+        form.addRow("常用布号", quick)
         self.fabric_fields["nominal_ct"].setAccessibleName("名义布号 CT")
         self.target_width = QLineEdit()
         self.target_width.setMaximumWidth(180)
@@ -273,6 +295,10 @@ class SpecificationDialog(QDialog):
             Fabric(**owner.draft.entities["fabric"]),
             ReferenceSettings(**owner.draft.entities.get("reference", {})),
         )
+        for field in self.fabric_fields.values():
+            field.textChanged.connect(self.update_fabric_preview)
+        self.dpi.valueChanged.connect(self.update_fabric_preview)
+        self.update_fabric_preview()
         self.reload_presets()
         self.margin_unit.currentIndexChanged.connect(self.change_margin_unit)
         self.paper.currentIndexChanged.connect(self.update_paper_controls)
@@ -283,6 +309,18 @@ class SpecificationDialog(QDialog):
         buttons.accepted.connect(self.validate_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def choose_ct(self, ct):
+        self.fabric_fields["nominal_ct"].setText(str(ct))
+        self.theoretical()
+
+    def update_fabric_preview(self):
+        try:
+            self.fabric_preview.refresh(
+                self.owner.design.width, self.owner.design.height, self.fabric_values()
+            )
+        except Exception as exc:
+            self.fabric_preview.invalid(exc)
 
     def update_effective_ct(self):
         from decimal import Decimal, InvalidOperation
@@ -330,6 +368,7 @@ class SpecificationDialog(QDialog):
         ):
             field.setText(value)
         self.update_paper_controls()
+        self.update_fabric_preview()
 
     def update_paper_controls(self):
         whole = self.paper.currentIndex() == 4
@@ -341,7 +380,7 @@ class SpecificationDialog(QDialog):
             self.overlap.setValue(0)
             self.landscape.setChecked(False)
 
-    def values(self):
+    def fabric_values(self):
         from stitchpress.core.configuration import margin_value
 
         fields = {k: w.text().strip() for k, w in self.fabric_fields.items()}
@@ -358,12 +397,15 @@ class SpecificationDialog(QDialog):
                     to_cm=True,
                 )
             )
-        fabric = Fabric(
+        return Fabric(
             **fields,
             source=self.fabric_source,
             dpi=self.dpi.value(),
             margin_unit=self._margin_unit,
         )
+
+    def values(self):
+        fabric = self.fabric_values()
         reference = ReferenceSettings(
             paper=["A4", "A3", "A2", "custom", "whole"][self.paper.currentIndex()],
             custom_width_cm=self.custom_w.text().strip(),

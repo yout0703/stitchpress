@@ -116,6 +116,10 @@ def export_commerce(
             if content.startswith("scene-"):
                 scene = settings.scenes[int(content[-1]) - 1]
                 deps["scene"] = scene
+                if scene["scene"] >= 9 and not scene.get("background_asset"):
+                    name = ("living", "bedroom", "study", "entryway")[scene["scene"] - 9]
+                    resource = Path(__file__).parents[1] / "resources" / "scenes" / f"{name}.jpg"
+                    deps["studio_background"] = sha256_file(resource)
                 asset = scene.get("background_asset")
                 deps["background_sha"] = sha256(project.assets[asset]) if asset else None
             if content == "compare" or settings.art_source == "original":

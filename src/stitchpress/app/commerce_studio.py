@@ -4,7 +4,7 @@ import copy
 import json
 from uuid import uuid4
 
-from PySide6.QtCore import QProcess, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QProcess, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -42,6 +43,7 @@ def page_name(target):
 
 class PreviewBoard(QWidget):
     ready = Signal(dict)
+    source_requested = Signal()
 
     def __init__(self, snapshot, parent=None):
         super().__init__(parent)
@@ -52,12 +54,18 @@ class PreviewBoard(QWidget):
         self.cache = {}
         self.pixmap = QPixmap()
         self.loaded_sha = None
+        self.observed_sha = None
+        self.attempted_sha = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         row = QHBoxLayout()
         self.status = QLabel("选择模板，预览当前作品的整套商品图片")
         self.status.setWordWrap(True)
         row.addWidget(self.status, 1)
+        self.source_button = QPushButton("前往作品绑定原图")
+        self.source_button.clicked.connect(self.source_requested.emit)
+        self.source_button.hide()
+        row.addWidget(self.source_button)
         self.refresh_button = QPushButton("更新整套预览")
         self.refresh_button.clicked.connect(self.refresh)
         row.addWidget(self.refresh_button)
@@ -66,10 +74,15 @@ class PreviewBoard(QWidget):
         self.cancel_button.hide()
         row.addWidget(self.cancel_button)
         layout.addLayout(row)
-        split = QSplitter()
+        split = self.split = QSplitter()
         self.list = QListWidget()
         self.list.setObjectName("commercePages")
         self.list.setAccessibleName("商品页面缩略图")
+        self.list.setViewMode(QListView.ViewMode.IconMode)
+        self.list.setFlow(QListView.Flow.TopToBottom)
+        self.list.setWrapping(False)
+        self.list.setMovement(QListView.Movement.Static)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list.setIconSize(QSize(94, 94))
         self.list.setMinimumWidth(160)
         self.list.setMaximumWidth(220)
@@ -82,6 +95,7 @@ class PreviewBoard(QWidget):
         self.canvas.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.canvas.setObjectName("commerceCanvas")
         self.canvas.setWordWrap(True)
+        self.canvas.installEventFilter(self)
         split.addWidget(self.canvas)
         split.setStretchFactor(1, 1)
         layout.addWidget(split, 1)
@@ -98,20 +112,28 @@ class PreviewBoard(QWidget):
             QTimer.singleShot(0, self.refresh)
 
     def check_stale(self):
-        if not self.isVisible() or not self.loaded_sha or self.process is not None:
+        if not self.isVisible() or self.process is not None:
             return
         try:
-            stale = fingerprint(self.snapshot()) != self.loaded_sha
-        except Exception:
-            stale = True
-        if stale:
-            self.status.setText("参数已改变 · 更新预览后再核对")
+            key = fingerprint(self.snapshot())
+        except Exception as exc:
+            self.status.setText("设置尚未完整：" + str(exc))
+            self.observed_sha = None
+            return
+        if key == self.loaded_sha or key == self.attempted_sha:
+            return
+        if key != self.observed_sha:
+            self.observed_sha = key
+            self.status.setText("设置已改变 · 停止输入后自动更新，当前画布为上次结果")
+            return
+        self.refresh()
 
     def refresh(self):
         self.stop()
         try:
             project = self.snapshot()
             key = fingerprint(project)
+            self.attempted_sha = key
             if key in self.cache:
                 self.present(self.cache[key])
                 return
@@ -137,12 +159,10 @@ class PreviewBoard(QWidget):
             process.setArguments(worker_arguments("worker", [str(job_path)]))
             process.finished.connect(lambda code, status: self.finished(process, key, code))
             process.errorOccurred.connect(lambda error: self.process_error(process))
-            self.list.setEnabled(False)
-            self.pixmap = QPixmap()
-            self.canvas.setPixmap(QPixmap())
-            self.canvas.setText("正在生成当前模板…")
+            if self.pixmap.isNull():
+                self.canvas.setText("正在生成当前模板…")
             process.start()
-            self.status.setText("正在生成 7 张详情 + 5 张方图…")
+            self.status.setText("正在更新 12 张图片 · 当前画布保留上次结果")
             self.cancel_button.show()
         except Exception as exc:
             self.status.setText(str(exc))
@@ -163,7 +183,7 @@ class PreviewBoard(QWidget):
         self.cancel_button.hide()
         try:
             if fingerprint(self.snapshot()) != expected:
-                self.status.setText("预览期间参数已改变 · 请更新预览")
+                self.status.setText("参数已改变 · 即将更新至最新版本")
                 return
             record = json.loads(self.output.read_bytes())
             if code != 0 or record.get("status") != "completed":
@@ -196,10 +216,11 @@ class PreviewBoard(QWidget):
         row = max(0, self.list.currentRow())
         self.pages = result["pages"]
         self.loaded_sha = result["fingerprint"]
+        self.list.blockSignals(True)
         self.list.clear()
         for i, page in enumerate(self.pages):
             item = QListWidgetItem(f"{i + 1:02d}  {page_name(page['target'])}")
-            item.setSizeHint(QSize(150, 110))
+            item.setSizeHint(QSize(138, 130))
             if "thumb" in page:
                 item.setIcon(QIcon(page["thumb"]))
             else:
@@ -211,6 +232,7 @@ class PreviewBoard(QWidget):
             f"7 张详情 · 5 张方图 · {12 - errors}/12 可预览"
             + (" · 点击未完成页查看原因" if errors else " · 草稿效果")
         )
+        self.list.blockSignals(False)
         self.list.setCurrentRow(min(row, len(self.pages) - 1))
         self.ready.emit(result)
 
@@ -218,6 +240,9 @@ class PreviewBoard(QWidget):
         if not 0 <= row < len(self.pages):
             return
         page = self.pages[row]
+        self.source_button.setVisible(
+            "error" in page and any(word in page["error"] for word in ("原图", "来源"))
+        )
         self.pixmap = QPixmap(page.get("preview", ""))
         if self.pixmap.isNull():
             self.canvas.setPixmap(QPixmap())
@@ -234,6 +259,11 @@ class PreviewBoard(QWidget):
             )
             shown.setDevicePixelRatio(ratio)
             self.canvas.setPixmap(shown)
+
+    def eventFilter(self, watched, event):
+        if watched is self.canvas and event.type() == QEvent.Type.Resize:
+            QTimer.singleShot(0, self.fit)
+        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -62,7 +62,7 @@ def test_twelve_commerce_outputs_keep_pixel_sizes_and_only_scene_dependencies_ch
 
 def test_scene_and_frame_coverage_and_out_of_bounds_preserve_design():
     project = project_with_source()
-    for i in range(9):
+    for i in range(13):
         settings = CommerceSettings(scenes=(asdict(SceneSettings(scene=i, frame=i % 8)),) * 3)
         renderer = CommerceRenderer(commerce_context(project), settings, project.assets, demo=True)
         image, checks = renderer.render("detail-scene-1")
@@ -108,3 +108,31 @@ def test_commerce_dialog_cancel_keeps_three_independent_settings(qtbot, monkeypa
     dialog.reject()
     assert digest(window.draft.entities) == before
     window.close()
+
+
+@pytest.mark.parametrize("ratio", [(300, 100), (100, 300), (200, 200)])
+def test_photo_scenes_keep_subject_ratio_and_pixels(ratio):
+    project = project_with_source()
+    renderer = CommerceRenderer(commerce_context(project), CommerceSettings(), project.assets)
+    renderer.subject.close()
+    renderer.subject = Image.new("RGB", ratio, "#a52d39")
+    for scene in range(9, 13):
+        canvas = Image.new("RGB", (600, 800), "white")
+        box = renderer.scene(canvas, (0, 0, 600, 800), SceneSettings(scene=scene, border=0, mat=0))
+        left, top, right, bottom = box
+        assert 0 <= left < right <= 600 and 0 <= top < bottom <= 800
+        assert abs((right - left) / (bottom - top) - ratio[0] / ratio[1]) < 0.02
+        assert canvas.getpixel(((left + right) // 2, (top + bottom) // 2)) == (165, 45, 57)
+        canvas.close()
+    renderer.subject.close()
+
+
+def test_custom_background_overrides_selected_photo_scene():
+    project = project_with_source()
+    spec = SceneSettings(scene=12, background_asset="sources/original.png")
+    settings = CommerceSettings(scenes=(asdict(spec),) * 3)
+    renderer = CommerceRenderer(commerce_context(project), settings, project.assets)
+    image, checks = renderer.render("detail-scene-1")
+    assert checks["scene_art_box"]
+    image.close()
+    renderer.subject.close()

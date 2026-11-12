@@ -2,8 +2,9 @@
 
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
+from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from .conversion import normalize_image
 from .errors import ResourceError, StitchPressError
@@ -21,6 +22,10 @@ SCENES = (
     "绿植角落",
     "窗边",
     "画廊墙面",
+    "精选 · 奶油客厅",
+    "精选 · 亚麻卧室",
+    "精选 · 绿意书房",
+    "精选 · 暖木玄关",
 )
 FRAMES = ("细黑框", "纯白框", "浅橡木", "深胡桃", "银色金属", "哑金框", "圆角框", "悬浮框")
 CONTENTS = {
@@ -65,11 +70,11 @@ class SceneSettings:
     def __post_init__(self):
         if (
             type(self.scene) is not int
-            or not 0 <= self.scene < 9
+            or not 0 <= self.scene < len(SCENES)
             or type(self.frame) is not int
             or not 0 <= self.frame < 8
         ):
-            raise StitchPressError("场景须0–8，相框须0–7")
+            raise StitchPressError("场景编号无效或相框不在0–7内")
         if not Decimal(".2") <= decimal(self.scale) <= Decimal("1.4") or any(
             abs(decimal(v)) > Decimal(".5") for v in (self.dx, self.dy)
         ):
@@ -312,7 +317,20 @@ class CommerceRenderer:
                 )
 
     def scene(self, image, box, spec):
-        self.background_scene(image, box, spec.scene)
+        photographic = spec.scene >= 9 and not spec.background_asset
+        if photographic:
+            name = ("living", "bedroom", "study", "entryway")[spec.scene - 9]
+            path = Path(__file__).parents[1] / "resources" / "scenes" / f"{name}.jpg"
+            with Image.open(path) as source:
+                background = ImageOps.fit(
+                    source,
+                    (box[2] - box[0], box[3] - box[1]),
+                    Image.Resampling.LANCZOS,
+                    centering=(0.5, 0.8),
+                )
+                image.paste(background, box[:2])
+        else:
+            self.background_scene(image, box, spec.scene if spec.scene < 9 else 0)
         if spec.background_asset:
             if spec.background_asset not in self.assets:
                 raise ResourceError("场景缺少内嵌背景资源")
@@ -324,14 +342,14 @@ class CommerceRenderer:
         w, h = x1 - x0, y1 - y0
         available = (
             max(1, round(w * 0.62 * float(spec.scale))),
-            max(1, round(h * 0.54 * float(spec.scale))),
+            max(1, round(h * (0.46 if photographic else 0.54) * float(spec.scale))),
         )
         art = ImageOps.contain(self.subject, available, Image.Resampling.LANCZOS)
         factor = image.width / 1200
         border, mat = round(spec.border * factor), round(spec.mat * factor)
         fw, fh = art.width + 2 * (border + mat), art.height + 2 * (border + mat)
         cx = x0 + w * (0.5 + float(spec.dx))
-        cy = y0 + h * (0.39 + float(spec.dy))
+        cy = y0 + h * ((0.33 if photographic else 0.39) + float(spec.dy))
         left, top = round(cx - fw / 2), round(cy - fh / 2)
         if left < x0 or top < y0 or left + fw > x1 or top + fh > y1:
             raise ResourceError("完整画框超出场景区域，请调整缩放/偏移；不会裁切作品")
@@ -345,8 +363,23 @@ class CommerceRenderer:
             (72, 91, 89),
             (52, 53, 50),
         )
+        if photographic:
+            shadow = Image.new("RGBA", image.size)
+            ImageDraw.Draw(shadow).rectangle(
+                (
+                    left + 4 * factor,
+                    top + 8 * factor,
+                    left + fw + 4 * factor,
+                    top + fh + 8 * factor,
+                ),
+                fill=(28, 24, 20, 70),
+            )
+            shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, 10 * factor)))
+            image.paste(shadow, (0, 0), shadow)
+            shadow.close()
         draw = ImageDraw.Draw(image)
-        draw.rectangle((left + 8, top + 10, left + fw + 8, top + fh + 10), fill=(162, 159, 151))
+        if not photographic:
+            draw.rectangle((left + 8, top + 10, left + fw + 8, top + fh + 10), fill=(162, 159, 151))
         if spec.frame == 6:
             draw.rounded_rectangle(
                 (left, top, left + fw, top + fh),

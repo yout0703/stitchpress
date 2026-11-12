@@ -312,3 +312,47 @@ def test_export_dialog_default_and_custom_directory_reach_worker(qtbot, monkeypa
     assert len(launched) == count and len(errors) == 9
     w.dirty = False
     w.close()
+
+
+def test_cloth_preview_tracks_units_and_invalid_values_without_mutating_project(qtbot, monkeypatch):
+    from decimal import Decimal
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    monkeypatch.setattr(w, "confirm_discard", lambda: True)
+    editor = w.spec_panel.editor
+    original = dict(w.draft.entities["fabric"])
+    editor.choose_ct(14)
+    pitch = Decimal(editor.fabric_fields["sx"].text())
+    assert pitch == Decimal("2.54") / 14
+    assert editor.fabric_preview.plan is not None
+    editor.margin_unit.setCurrentIndex(editor.margin_unit.findData("mm"))
+    assert Decimal(editor.fabric_fields["left"].text()) == Decimal(original["left"]) * 10
+    editor.fabric_fields["left"].setText("25")
+    assert editor.fabric_preview.diagram.measurements[4] == 2.5
+    editor.fabric_fields["sx"].setText("")
+    assert editor.fabric_preview.plan is None
+    editor.fabric_fields["sx"].setText(str(pitch))
+    assert editor.fabric_preview.plan is not None
+    assert w.draft.entities["fabric"] == original
+    w.spec_panel.reload()
+    w.close()
+
+
+def test_commerce_inspector_selection_with_invalid_edit_and_photo_apply(qtbot, monkeypatch):
+    w = Workbench()
+    qtbot.addWidget(w)
+    monkeypatch.setattr(w, "confirm_discard", lambda: True)
+    d = w.commerce_panel.editor
+    monkeypatch.setattr(d.board, "refresh", lambda: None)
+    d.use_photo_scenes()
+    assert [s["scene"] for s in d.values().scenes] == [9, 10, 11]
+    assert w.draft.entities["commerce"]["scenes"][0]["scene"] < 9
+    # Selecting a page must remain possible while an unrelated numeric edit is incomplete.
+    d.scenes[0]["fields"]["scale"].setText("")
+    d.edit_current_page()
+    d.scenes[0]["fields"]["scale"].setText("1")
+    w.commerce_panel.apply()
+    assert w.draft.entities["commerce"]["scenes"][2]["scene"] == 11
+    w.dirty = False
+    w.close()

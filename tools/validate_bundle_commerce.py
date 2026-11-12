@@ -35,10 +35,12 @@ def main():
         k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"}
     }
     results = []
-    for template in templates():
+    for index, template in enumerate(templates()):
         project.entities["commerce"] = apply_template(
             CommerceSettings(), template, keep_scenes=False
         ).to_dict()
+        for scene in project.entities["commerce"]["scenes"]:
+            scene["scene"] = 9 + index % 4
         path = root / (template["id"] + ".stitchpress")
         path.write_bytes(project.encode())
         before = sha256_file(path)

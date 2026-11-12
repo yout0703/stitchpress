@@ -197,6 +197,8 @@ def apply_appearance(app: QApplication, root, theme):
             min-width: 28px; }
         QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
         QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+        QLabel#commerceCanvas { background: $canvas; border-radius: 8px; }
+        QWidget#commerceInspector, QWidget#fabricPreview { background: $panel; }
         QSplitter::handle { background: $line; width: 1px; }
         QGroupBox { border: 1px solid $line; border-radius: 6px;
             margin-top: 18px; padding: 14px 10px 10px; font-weight: 600; }

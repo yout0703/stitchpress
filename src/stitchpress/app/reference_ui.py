@@ -1475,7 +1475,10 @@ class ReferenceFeatures:
     def export_reference_commerce(self):
         from stitchpress.core.commerce import TARGETS
 
-        choices = ["全部12张", "7张详情", "5张方图", *TARGETS]
+        from .commerce_studio import page_name
+
+        labels = {f"{i + 1:02d} · {page_name(t)}": t for i, t in enumerate(TARGETS)}
+        choices = ["全部12张", "7张详情", "5张方图", *labels]
         chosen, ok = QInputDialog.getItem(
             self, "电商JPG输出", "选择分组或单张目标", choices, 0, False
         )
@@ -1488,7 +1491,7 @@ class ReferenceFeatures:
             if chosen == choices[1]
             else tuple(t for t in TARGETS if t.startswith("square"))
             if chosen == choices[2]
-            else (chosen,)
+            else (labels[chosen],)
         )
         options = PostSettings(
             **{

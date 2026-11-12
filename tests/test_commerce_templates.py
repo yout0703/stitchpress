@@ -195,3 +195,28 @@ def test_bundled_font_revision_invalidates_preview_and_export_review(monkeypatch
     monkeypatch.setattr(commerce_layout, "commerce_font", lambda: b"new font revision")
     assert fingerprint(p) != before[0]
     assert post_fingerprint(p) != before[1]
+
+
+def test_preview_debounce_waits_for_valid_stable_parameters(qtbot, monkeypatch):
+    from stitchpress.app.commerce_studio import PreviewBoard
+
+    project = source_project()
+    board = PreviewBoard(lambda: project)
+    qtbot.addWidget(board)
+    monkeypatch.setattr(board, "isVisible", lambda: True)
+    calls = []
+    monkeypatch.setattr(board, "refresh", lambda: calls.append(fingerprint(project)))
+    board.loaded_sha = fingerprint(project)
+    project.entities["metadata"]["title"] = "新标题"
+    board.check_stale()
+    assert not calls
+    board.check_stale()
+    assert calls == [fingerprint(project)]
+
+    # A rejected form does not launch a worker or remove the last image.
+    def invalid():
+        raise ValueError("缩放无效")
+
+    board.snapshot = invalid
+    board.check_stale()
+    assert len(calls) == 1 and "缩放无效" in board.status.text()
