@@ -60,12 +60,13 @@ def export_commerce(
     journal = work / f"commerce-{identity}.json"
     receipt = {
         "job_id": identity,
-        "pipeline": "commerce-v1",
+        "pipeline": "commerce-v2",
         "project_id": project.project_id,
         "input_fingerprint": digest(
             {
                 "design": context["design"].content_sha,
                 "settings": settings.to_dict(),
+                "assets": {k: sha256(v) for k, v in project.assets.items()},
                 "metadata": project.entities["metadata"],
             }
         ),
@@ -98,14 +99,16 @@ def export_commerce(
                 if k not in {"scenes", "squares", "closeup_x", "closeup_y", "closeup_zoom", "care"}
             }
             deps = {
-                "pipeline": "commerce-v1",
+                "pipeline": "commerce-v2",
                 "target": target,
                 "content": content,
                 "design_sha": context["design"].content_sha,
                 "settings": config,
                 "metadata": project.entities["metadata"],
-                "font": sha256(context["font_data"])
-                if context["font_data"]
+                "font": sha256(renderer.context["font_data"])
+                if renderer.context["font_data"]
+                else "bundled-noto-cjk-v1"
+                if settings.template
                 else "bundled-noto-sans",
                 "demo": demo,
                 "template_facts": renderer.fields,

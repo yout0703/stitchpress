@@ -383,7 +383,10 @@ class Workbench(
         self.theme = chosen_theme if chosen_theme in THEMES else "dark"
         self.coordinator = None
         self.project_path = None
+        from .commerce_templates import recommended_settings
+
         self.draft = demo_project()
+        self.draft.entities["commerce"] = recommended_settings().to_dict()
         self.baseline = copy.deepcopy(self.draft)
         self.process = None
         self.job = None
@@ -912,7 +915,11 @@ class Workbench(
 
     def new_demo(self):
         if self.confirm_discard():
-            self.set_project(demo_project())
+            from .commerce_templates import recommended_settings
+
+            project = demo_project()
+            project.entities["commerce"] = recommended_settings().to_dict()
+            self.set_project(project)
 
     def open_project(self):
         if not self.confirm_discard():

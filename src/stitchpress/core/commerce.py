@@ -103,8 +103,15 @@ class CommerceSettings:
     detail_dpi: int = 150
     art_source: str = "simulation"
     schema_version: int = 1
+    template: dict | None = None
+    font_asset: str | None = None
 
     def __post_init__(self):
+        from .commerce_templates import validate_template
+
+        validate_template(self.template)
+        if self.font_asset is not None and not isinstance(self.font_asset, str):
+            raise StitchPressError("商品字体引用无效")
         if self.art_source not in {"simulation", "original", "dot"}:
             raise StitchPressError("展示来源须为原图、点图或已有X模拟")
         if any(
@@ -146,6 +153,14 @@ class CommerceSettings:
 
 class CommerceRenderer:
     def __init__(self, context, settings, assets, *, demo=False):
+        from .commerce_templates import template_fingerprint
+
+        context = dict(context)
+        if settings.font_asset:
+            if settings.font_asset not in assets:
+                raise ResourceError("商品模板缺少内嵌字体")
+            context["font_data"] = assets[settings.font_asset]
+        self.template_sha = template_fingerprint(settings.template)
         self.context, self.settings, self.assets, self.demo = context, settings, assets, demo
         self.design = context["design"]
         self.fields = values_for(
@@ -375,6 +390,10 @@ class CommerceRenderer:
     def render(self, target):
         if target not in TARGETS:
             raise StitchPressError("未知商品导出项")
+        if self.settings.template is not None:
+            from .commerce_layout import render_template
+
+            return render_template(self, target)
         square = target.startswith("square")
         content = (
             self.settings.squares[int(target[-1]) - 1] if square else target.removeprefix("detail-")

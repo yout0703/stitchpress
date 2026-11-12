@@ -72,6 +72,8 @@ def validate_entities(entities: dict, assets: dict[str, bytes]):
         from stitchpress.core.commerce import CommerceSettings, SceneSettings
 
         settings = CommerceSettings(**entities["commerce"])
+        if settings.font_asset and settings.font_asset not in assets:
+            raise StitchPressError("商品模板缺少内嵌字体")
         for scene in settings.scenes:
             asset = SceneSettings(**scene).background_asset
             if asset and asset not in assets:

@@ -62,6 +62,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --all-groups python tools/validate_bundle_reference.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/reference
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --all-groups python tools/validate_bundle_commerce.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/commerce
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Compress-Archive -Path dist/windows/StitchPress -DestinationPath dist/windows/StitchPress-windows-x64-local.zip
       - name: Retain checks and build logs
         if: always()

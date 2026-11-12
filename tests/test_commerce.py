@@ -102,9 +102,9 @@ def test_commerce_dialog_cancel_keeps_three_independent_settings(qtbot, monkeypa
     before = digest(window.draft.entities)
     dialog = CommerceDialog(window)
     qtbot.addWidget(dialog)
-    dialog.scenes[0]["scene"].setCurrentIndex(8)
-    assert dialog.values().scenes[0]["scene"] == 8
-    assert dialog.values().scenes[1]["scene"] == 2
+    dialog.scenes[0]["scene"].setCurrentIndex(7)
+    assert dialog.values().scenes[0]["scene"] == 7
+    assert dialog.values().scenes[1] == dialog.saved.scenes[1]
     dialog.reject()
     assert digest(window.draft.entities) == before
     window.close()

@@ -173,6 +173,8 @@ class EditorPanel(QWidget):
             else []
         )
         if self.editor:
+            if hasattr(self.editor, "board"):
+                self.editor.board.stop()
             old_editor = self.form_scroll.takeWidget()
             old_editor.hide()
             old_editor.deleteLater()
@@ -750,14 +752,13 @@ class ReferenceFeatures:
     def commerce_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        page_heading(layout, "商品图片", "配置展示源、三张场景和详情 / 方图内容。")
+        page_heading(layout, "商品图片", "选择一套风格，将作品整理为完整的详情图与方图。")
         self.commerce_panel = EditorPanel(self, "commerce")
         self.reference_panels.append(self.commerce_panel)
         layout.addWidget(self.commerce_panel)
         row(
             layout,
             action("图形化挑选场景 / 相框…", self.commerce_gallery),
-            action("查看实际商品图", self.open_commerce_preview),
             action("导出 JPG 组 / 单张…", self.export_reference_commerce),
         )
         return page

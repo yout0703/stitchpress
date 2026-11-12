@@ -11,7 +11,17 @@ def run(job_path: Path) -> int:
     job = json.loads(job_path.read_bytes())
     output = Path(job["output"])
     try:
-        if job["operation"] in {"post-plan", "post-preview", "reference-export"}:
+        if job["operation"] == "commerce-sheet":
+            from .commerce_templates import render_sheet
+            from .store import Project
+
+            result = render_sheet(
+                Project.decode(Path(job["project"]).read_bytes()),
+                output.parent,
+                cancel=lambda: Path(job["cancel_file"]).exists(),
+                catalog=job.get("catalog", False),
+            )
+        elif job["operation"] in {"post-plan", "post-preview", "reference-export"}:
             from stitchpress.core.post import PostSettings
 
             from .reference_package import export_reference, preflight

@@ -16,9 +16,11 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -44,14 +46,54 @@ class CommerceDialog(QDialog):
         self.owner = owner
         self.saved = CommerceSettings(**owner.draft.entities.get("commerce", {}))
         self.assets = {}
+        self.template = copy.deepcopy(self.saved.template)
+        self.font_asset = self.saved.font_asset
+        self.previous = None
         self.setWindowTitle("商品模板 · 三场景与7+5")
         self.resize(760, 650)
         layout = QVBoxLayout(self)
-        note = QLabel("三张场景分别配置；可从图库挑选，也可导入自己的背景。")
+        toolbar = QHBoxLayout()
+        self.template_label = QLabel()
+        self.template_label.setProperty("role", "sectionTitle")
+        toolbar.addWidget(self.template_label, 1)
+        choose = QPushButton("选择模板…")
+        choose.setProperty("role", "primary")
+        choose.clicked.connect(self.choose_template)
+        toolbar.addWidget(choose)
+        self.undo_button = QPushButton("撤销模板切换")
+        self.undo_button.setEnabled(False)
+        self.undo_button.clicked.connect(self.undo_template)
+        toolbar.addWidget(self.undo_button)
+        more = QPushButton("我的预设")
+        menu = QMenu(more)
+        menu.addAction("保存为个人预设…", self.save_personal)
+        menu.addAction("导入个人预设…", self.import_personal)
+        menu.addAction("导出当前预设…", self.export_personal)
+        menu.addAction("选择商品字体…", self.import_font)
+        more.setMenu(menu)
+        toolbar.addWidget(more)
+        layout.addLayout(toolbar)
+        note = QLabel("先选模板，再核对整套图片。未应用的设置只用于本页预览，不影响作品导出。")
         note.setWordWrap(True)
         layout.addWidget(note)
         tabs = self.tabs = QTabWidget()
-        layout.addWidget(tabs, 1)
+        from .commerce_studio import PreviewBoard
+
+        mode_row = QHBoxLayout()
+        self.mode = QComboBox()
+        self.mode.addItems(["整套预览", "页面与样式设置"])
+        mode_row.addWidget(self.mode)
+        mode_row.addStretch()
+        edit_page = QPushButton("编辑当前页面")
+        edit_page.clicked.connect(self.edit_current_page)
+        mode_row.addWidget(edit_page)
+        layout.addLayout(mode_row)
+        self.views = QStackedWidget()
+        self.board = PreviewBoard(self.snapshot, self)
+        self.views.addWidget(self.board)
+        self.views.addWidget(tabs)
+        self.mode.currentIndexChanged.connect(self.views.setCurrentIndex)
+        layout.addWidget(self.views, 1)
         self.scenes = []
         for i, saved in enumerate(self.saved.scenes):
             spec = SceneSettings(**saved)
@@ -176,7 +218,8 @@ class CommerceDialog(QDialog):
         form.addRow(self.care)
         help_label = QLabel(
             "标题/页脚支持 {code}、{title}、{width}、{height}、{colors}、{stitches}、"
-            "{width_cm}、{height_cm} 等；输出字体沿用作品设置。来源对比须有原图。"
+            "{width_cm}、{height_cm} 等；新版模板自带中文字体，可在我的预设中更换。"
+            "来源对比须有原图。"
         )
         help_label.setWordWrap(True)
         style_form.addRow(help_label)
@@ -199,6 +242,164 @@ class CommerceDialog(QDialog):
         buttons.accepted.connect(self.validate_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.refresh_template_label()
+        self.finished.connect(self.board.stop)
+
+    def snapshot(self):
+        project = copy.deepcopy(self.owner.draft)
+        project.entities["commerce"] = self.values().to_dict()
+        project.assets.update(self.assets)
+        return project
+
+    def refresh_template_label(self):
+        self.template_label.setText(self.template["name"] if self.template else "经典模板")
+
+    def set_values(self, value):
+        self.template = copy.deepcopy(value.template)
+        self.font_asset = value.font_asset
+        for controls, scene in zip(self.scenes, value.scenes, strict=True):
+            controls["scene"].setCurrentIndex(scene["scene"])
+            controls["frame"].setCurrentIndex(scene["frame"])
+            for key, field in controls["fields"].items():
+                field.setText(scene[key])
+            for key in ("border", "mat"):
+                controls[key].setValue(scene[key])
+            controls["mat_color"].setText(",".join(map(str, scene["mat_color"])))
+            controls["asset"] = scene.get("background_asset")
+            controls["background"].setText(
+                "已绑定作品背景" if controls["asset"] else "使用内置示意场景"
+            )
+        for key, field in self.text_fields.items():
+            field.setText(getattr(value, key))
+        for key, field in self.colors.items():
+            field.setText(",".join(map(str, getattr(value, key))))
+        for key, field in self.detail_fields.items():
+            field.setValue(getattr(value, key))
+        self.care.setPlainText(value.care)
+        self.size.setValue(value.font_pixels)
+        self.dpi.setValue(value.square_dpi)
+        self.art_source.setCurrentIndex(self.art_source.findData(value.art_source))
+        for field, content in zip(self.squares, value.squares, strict=True):
+            field.setCurrentIndex(field.findData(content))
+        self.refresh_template_label()
+
+    def choose_template(self):
+        from .commerce_studio import TemplatePicker
+
+        try:
+            dialog = TemplatePicker(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.previous = (self.values(), copy.deepcopy(self.assets))
+                self.assets.update(dialog.result_assets)
+                self.set_values(dialog.result_settings)
+                self.undo_button.setEnabled(True)
+                self.mode.setCurrentIndex(0)
+                self.board.refresh()
+        except Exception as exc:
+            QMessageBox.warning(self, "模板未切换", str(exc))
+
+    def undo_template(self):
+        if self.previous:
+            value, assets = self.previous
+            self.assets = assets
+            self.set_values(value)
+            self.previous = None
+            self.undo_button.setEnabled(False)
+            self.board.refresh()
+
+    def edit_current_page(self):
+        from stitchpress.core.commerce import TARGETS
+
+        row = max(0, self.board.list.currentRow())
+        target = TARGETS[row]
+        content = (
+            self.values().squares[int(target[-1]) - 1]
+            if target.startswith("square")
+            else target.removeprefix("detail-")
+        )
+        self.tabs.setCurrentIndex(int(content[-1]) - 1 if content.startswith("scene-") else 3)
+        self.mode.setCurrentIndex(1)
+
+    def make_personal(self):
+        from .commerce_templates import preset_project
+
+        name, ok = QInputDialog.getText(self, "保存个人预设", "预设名称（不包含作品或客户货号）")
+        if not ok:
+            return None
+        return preset_project(
+            self.values(),
+            {**self.owner.draft.assets, **self.assets},
+            self.owner.draft.entities["metadata"],
+            name,
+            inherited_font=self.owner.draft.entities.get("output_font", {}).get("asset"),
+        )
+
+    def save_personal(self):
+        from .commerce_templates import save_preset
+
+        try:
+            preset = self.make_personal()
+            if preset is not None:
+                folder = settings_dir() / "commerce-templates"
+                folder.mkdir(parents=True, exist_ok=True)
+                save_preset(
+                    preset, folder / (preset.entities["commerce_preset"]["id"] + ".stitchtemplate")
+                )
+                self.board.status.setText("个人预设已保存 · 可在选择模板中找到")
+        except Exception as exc:
+            QMessageBox.warning(self, "预设未保存", str(exc))
+
+    def export_personal(self):
+        from .commerce_templates import save_preset
+
+        try:
+            preset = self.make_personal()
+            if preset is None:
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "导出个人预设",
+                "商品模板.stitchtemplate",
+                "StitchPress 模板 (*.stitchtemplate)",
+            )
+            if path:
+                save_preset(preset, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "预设未导出", str(exc))
+
+    def import_personal(self):
+        from .commerce_templates import load_preset, save_preset
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入个人预设", "", "StitchPress 模板 (*.stitchtemplate)"
+        )
+        if not path:
+            return
+        try:
+            preset = load_preset(path)
+            folder = settings_dir() / "commerce-templates"
+            folder.mkdir(parents=True, exist_ok=True)
+            save_preset(preset, folder / (uuid4().hex + ".stitchtemplate"))
+            self.choose_template()
+        except Exception as exc:
+            QMessageBox.warning(self, "预设未导入", str(exc))
+
+    def import_font(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择可再分发的商品字体", "", "Font (*.ttf *.otf)"
+        )
+        if path:
+            try:
+                from stitchpress.core.text import checked_font
+
+                raw = Path(path).read_bytes()
+                checked_font(24, raw, "商品规格")
+                name = "resources/commerce-fonts/" + sha256(raw) + Path(path).suffix
+                self.assets[name] = raw
+                self.font_asset = name
+                self.board.status.setText("商品字体已选择 · 更新预览后核对")
+            except Exception as exc:
+                QMessageBox.warning(self, "字体未导入", str(exc))
 
     def import_background(self, index):
         path, _ = QFileDialog.getOpenFileName(
@@ -242,6 +443,8 @@ class CommerceDialog(QDialog):
                 )
             )
         return CommerceSettings(
+            template=self.template,
+            font_asset=self.font_asset,
             scenes=tuple(scenes),
             squares=tuple(w.currentData() for w in self.squares),
             **{k: v.text() for k, v in self.text_fields.items()},
