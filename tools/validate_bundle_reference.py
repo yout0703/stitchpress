@@ -16,7 +16,7 @@ from stitchpress.app.post_settings import load_settings
 from stitchpress.app.reference_actions import import_pattern
 from stitchpress.app.reference_package import post_fingerprint
 from stitchpress.app.store import Project
-from stitchpress.core.commerce import TARGETS, CommerceSettings
+from stitchpress.core.commerce import FRAMES, SCENES, TARGETS, CommerceSettings
 from stitchpress.core.configuration import ReferenceSettings
 from stitchpress.core.identity import canonical_bytes, digest, sha256_file
 from stitchpress.core.models import Design
@@ -128,7 +128,17 @@ def main():
             assert image.format == "PNG" and image.mode == "RGB"
         previews.append(result["checks"])
     gallery = worker("gallery", "commerce-gallery")
-    assert len(gallery["items"]) == 17
+    expected_gallery = [
+        (kind, index, name)
+        for kind, names in (("scene", SCENES), ("frame", FRAMES))
+        for index, name in enumerate(names)
+    ]
+    assert [
+        (item["kind"], item["index"], item["name"]) for item in gallery["items"]
+    ] == expected_gallery
+    for item in gallery["items"]:
+        with Image.open(item["file"]) as image:
+            assert image.format == "PNG" and image.size == (480, 160)
     destination = root / "参考全套-中文路径"
     receipt = worker(
         "export",
@@ -177,7 +187,7 @@ def main():
         receipt=receipt,
         verification=checks,
         previews=previews,
-        gallery_items=17,
+        gallery_items=len(gallery["items"]),
         cancellation_status=cancelled["status"],
         failure_status=failed["status"],
         review_override_rejected=bool(args.factory_project),
@@ -193,7 +203,7 @@ def main():
             dict(
                 files=receipt["files"],
                 previews=len(previews),
-                gallery_items=17,
+                gallery_items=len(gallery["items"]),
                 output=str(root),
                 binary_sha=summary["binary_sha"],
             ),
