@@ -3,6 +3,7 @@
 import io
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import lru_cache
 from math import ceil
 from pathlib import Path
 
@@ -486,15 +487,20 @@ class Renderer:
             return self.verify_cells(actual, raster)
 
 
+@lru_cache(maxsize=2)
+def _screen_transform(icc: bytes):
+    return ImageCms.buildTransformFromOpenProfiles(
+        ImageCms.ImageCmsProfile(io.BytesIO(icc)),
+        ImageCms.createProfile("sRGB"),
+        "CMYK",
+        "RGB",
+        renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+    )
+
+
 def screen_rgb(image: Image.Image, icc: bytes | None) -> Image.Image:
     if icc and image.mode == "CMYK":
-        return ImageCms.profileToProfile(
-            image,
-            ImageCms.ImageCmsProfile(io.BytesIO(icc)),
-            ImageCms.createProfile("sRGB"),
-            outputMode="RGB",
-            renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
-        )
+        return ImageCms.applyTransform(image, _screen_transform(icc))
     return image.convert("RGB")
 
 

@@ -78,9 +78,9 @@ class Project:
             updated.source_schema = PROJECT_SCHEMA
         return updated
 
-    def encode(self) -> bytes:
+    def encode(self, *, compression=ZIP_DEFLATED) -> bytes:
         if self.source_schema < PROJECT_SCHEMA:
-            return self.upgraded_copy().encode()
+            return self.upgraded_copy().encode(compression=compression)
         from .validation import validate_entities
 
         validate_entities(self.entities, self.assets)
@@ -97,7 +97,7 @@ class Project:
             "assets": {n: sha256(b) for n, b in self.assets.items()},
         }
         output = io.BytesIO()
-        with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        with ZipFile(output, "w", compression) as archive:
             archive.writestr("manifest.json", canonical_bytes(manifest))
             for name, data in sorted(self.assets.items()):
                 archive.writestr(name, data)
@@ -259,6 +259,7 @@ class Coordinator:
         changes: dict[str, dict],
         assets: dict[str, bytes] | None = None,
         event_id: str | None = None,
+        prepared_payload: bytes | None = None,
     ) -> Project:
         with self._mutex:
             if self.project.source_schema < PROJECT_SCHEMA and self._disk_sha is not None:
@@ -291,7 +292,20 @@ class Coordinator:
             if event_id:
                 updated.events.append(event_id)
             updated = updated.upgraded_copy()
-            payload = updated.encode()
+            if prepared_payload is None:
+                payload = updated.encode()
+            else:
+                prepared = Project.decode(prepared_payload)
+                if (
+                    prepared.project_id != updated.project_id
+                    or prepared.source_schema != PROJECT_SCHEMA
+                    or prepared.commit_seq != updated.commit_seq
+                    or prepared.events != updated.events
+                    or digest(prepared.entities) != digest(updated.entities)
+                    or prepared.assets != updated.assets
+                ):
+                    raise ConflictError("后台保存快照与本次提交不符；草稿未丢弃")
+                payload = prepared_payload
             previous = self.path.read_bytes() if self.path.exists() else None
             if (sha256(previous) if previous is not None else None) != self._disk_sha:
                 raise ConflictError("校验期间作品被外部修改，已停止保存")

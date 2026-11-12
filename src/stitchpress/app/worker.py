@@ -11,7 +11,25 @@ def run(job_path: Path) -> int:
     job = json.loads(job_path.read_bytes())
     output = Path(job["output"])
     try:
-        if job["operation"] == "commerce-sheet":
+        if job["operation"] == "encode-project":
+            from .store import Project
+
+            project = Project.decode(Path(job["project"]).read_bytes())
+            candidate = output.parent / "prepared.stitchpress"
+            atomic_write(candidate, project.encode())
+            result = dict(candidate=str(candidate))
+        elif job["operation"] == "recovery":
+            from .recovery import RecoveryStore
+            from .store import Project
+
+            project = Project.decode(Path(job["project"]).read_bytes())
+            store = RecoveryStore(output.parent)
+            store.checkpoint(project, job.get("original_path"))
+            result = dict(
+                candidate=str(store.path),
+                receipt=json.loads(store.path.with_suffix(".json").read_bytes()),
+            )
+        elif job["operation"] == "commerce-sheet":
             from .commerce_templates import render_sheet
             from .store import Project
 

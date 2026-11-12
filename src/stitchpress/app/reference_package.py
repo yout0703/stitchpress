@@ -57,7 +57,9 @@ def input_pattern(project):
 def post_fingerprint(project):
     from .post_settings import settings_document
 
-    record, _ = settings_document(project, "resources")
+    # A fingerprint is a pure content digest. Saving/exporting still validates the
+    # full container; UI invalidation must never compress a project on every click.
+    record, _ = settings_document(project, "resources", validate=False)
     record.pop("origin_project_id")
     from .commerce_templates import template_font_sha
 

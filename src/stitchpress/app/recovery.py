@@ -24,7 +24,6 @@ class RecoveryStore:
 
     def checkpoint(self, project: Project, original_path: Path | None):
         payload = project.encode()
-        atomic_write(self.path, payload)
         receipt = {
             "schema_version": 1,
             "project_id": project.project_id,
@@ -33,6 +32,12 @@ class RecoveryStore:
             "created_at": datetime.now(UTC).isoformat(),
             "sha256": sha256(payload),
         }
+        self.publish(payload, receipt)
+
+    def publish(self, payload, receipt):
+        if sha256(payload) != receipt["sha256"]:
+            raise StitchPressError("后台草稿校验失败，保留上一份恢复副本")
+        atomic_write(self.path, payload)
         atomic_write(self.path.with_suffix(".json"), canonical_bytes(receipt))
 
     def clear(self):

@@ -3,6 +3,7 @@
 import copy
 import json
 from uuid import uuid4
+from zipfile import ZIP_STORED
 
 from PySide6.QtCore import QEvent, QProcess, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
@@ -150,7 +151,7 @@ class PreviewBoard(QWidget):
             folder = settings_dir() / "work" / ("commerce-preview-" + uuid4().hex)
             folder.mkdir(parents=True)
             project_path = folder / "snapshot.stitchpress"
-            atomic_write(project_path, project.encode())
+            atomic_write(project_path, project.encode(compression=ZIP_STORED))
             self.output = folder / "result.json"
             self.cancel_file = folder / "cancel"
             job = dict(

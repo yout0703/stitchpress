@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -1060,10 +1060,10 @@ class ReferenceFeatures:
             self.error(exc)
 
     def refresh_reference_symbols(self):
-        library = library_from_assets(self.draft.entities["library"], self.draft.assets)
+        library = self.symbol_library()
         mapping = self.draft.entities["mapping"]
         manual = self.draft.entities.get("manual_mapping", {}).get("bindings", {})
-        token = digest([library.revision, mapping, manual, self.design.content_sha])
+        token = digest([self.symbol_artwork.token, mapping, manual, self.design.content_sha])
         if token == getattr(self, "_symbol_page_sha", None):
             return
         self._symbol_page_sha = token
@@ -1073,22 +1073,14 @@ class ReferenceFeatures:
         )
         self.ref_symbols.clear()
         for symbol in library.symbols:
-            rgb = screen_rgb(symbol.image(), library.icc)
             label = (
                 str(symbol.external_id)
                 if symbol.key.startswith("int:")
                 else symbol.key.removeprefix("str:")
             )
-            thumbnail = QPixmap.fromImage(ImageQt(rgb)).scaled(
-                40,
-                40,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.FastTransformation,
-            )
-            item = QListWidgetItem(QIcon(thumbnail), label)
+            item = QListWidgetItem(self.symbol_artwork.icon(symbol.key), label)
             item.setToolTip(f"符号 {label} · 原始标识 {symbol.key}")
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            rgb.close()
             item.setData(Qt.ItemDataRole.UserRole, symbol.key)
             self.ref_symbols.addItem(item)
         self.ref_mapping.setRowCount(0)
@@ -1116,10 +1108,8 @@ class ReferenceFeatures:
                 item.setData(Qt.ItemDataRole.UserRole, color.key)
                 if col == 2:
                     symbol = library.by_key[mapping[color.key]]
-                    rgb = screen_rgb(symbol.image(), library.icc)
-                    item.setIcon(QIcon(QPixmap.fromImage(ImageQt(rgb))))
+                    item.setIcon(self.symbol_artwork.icon(symbol.key))
                     item.setToolTip(mapping[color.key])
-                    rgb.close()
                 self.ref_mapping.setItem(row_number, col, item)
         self.filter_reference_symbols(self.ref_symbol_search.text())
 
@@ -1132,7 +1122,7 @@ class ReferenceFeatures:
     def show_reference_symbol(self, current, previous=None):
         if not current:
             return
-        library = library_from_assets(self.draft.entities["library"], self.draft.assets)
+        library = self.symbol_library()
         image = screen_rgb(
             library.by_key[current.data(Qt.ItemDataRole.UserRole)].image(), library.icc
         )
@@ -1190,7 +1180,7 @@ class ReferenceFeatures:
 
     def auto_reference_symbols(self):
         try:
-            library = library_from_assets(self.draft.entities["library"], self.draft.assets)
+            library = self.symbol_library()
             manual = (
                 self.draft.entities.get("manual_mapping", {}).get("bindings", {})
                 if self.keep_manual.isChecked()
@@ -1265,7 +1255,7 @@ class ReferenceFeatures:
             from stitchpress.core.identity import sha256
             from stitchpress.core.resources import library_assets
 
-            library = library_from_assets(self.draft.entities["library"], self.draft.assets)
+            library = self.symbol_library()
             raw = Path(path).read_bytes()
             # Binding a profile must not silently relabel existing ink values.
             # A new folder import performs the actual RGB/CMYK normalization.

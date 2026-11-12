@@ -6,9 +6,10 @@ from dataclasses import asdict
 from datetime import UTC
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZIP_STORED
 
 from PIL import Image
-from PySide6.QtCore import QRectF, QTimer
+from PySide6.QtCore import QProcess, QRectF, QTimer
 from PySide6.QtGui import QPainterPath
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -46,6 +47,7 @@ from stitchpress.core.layout import Fabric
 from stitchpress.core.masks import annotation_masks
 from stitchpress.core.resources import load_font
 from stitchpress.platform.files import atomic_write
+from stitchpress.platform.launch import worker_arguments, worker_program
 from stitchpress.platform.settings import settings_dir
 
 from .assets import merge_assets, remap_assets
@@ -854,6 +856,7 @@ class LocalFeatures:
     def init_local_features(self):
         self.recovery = RecoveryStore(settings_dir() / "recovery")
         self._last_recovery_sha = None
+        self._recovery_process = None
         self.preview_dialog = None
         self.recovery_timer = QTimer(self)
         self.recovery_timer.timeout.connect(self.checkpoint_draft)
@@ -873,10 +876,71 @@ class LocalFeatures:
                 return
             draft = copy.deepcopy(self.draft)
             draft.entities["recovery_form"] = form
-            self.recovery.checkpoint(draft, self.project_path)
-            self._last_recovery_sha = fingerprint
+            if sum(map(len, draft.assets.values())) < 8 * 1024**2:
+                self.recovery.checkpoint(draft, self.project_path)
+                self._last_recovery_sha = fingerprint
+            else:
+                self.start_recovery_worker(draft, fingerprint)
         except Exception as exc:
             self.statusBar().showMessage(f"草稿恢复副本未更新：{exc}；请手动保存")
+
+    def start_recovery_worker(self, draft, fingerprint):
+        if self._recovery_process is not None:
+            return  # One in flight; a later timer captures subsequent edits.
+        folder = settings_dir() / "recovery-work" / uuid4().hex
+        folder.mkdir(parents=True)
+        snapshot = folder / "input.stitchpress"
+        atomic_write(snapshot, draft.encode(compression=ZIP_STORED))
+        output = folder / "result.json"
+        job = folder / "job.json"
+        atomic_write(
+            job,
+            canonical_bytes(
+                dict(
+                    operation="recovery",
+                    project=str(snapshot),
+                    output=str(output),
+                    original_path=str(self.project_path) if self.project_path else None,
+                )
+            ),
+        )
+        process = QProcess(self)
+        self._recovery_process = process
+        process.setProgram(worker_program())
+        process.setArguments(worker_arguments("worker", [str(job)]))
+
+        def finished(code, *_):
+            try:
+                if self._recovery_process is not process:
+                    return
+                self._recovery_process = None
+                report = json.loads(output.read_bytes())
+                if code or report["status"] != "completed":
+                    raise StitchPressError(report.get("error", "后台草稿未完成"))
+                result = report["result"]
+                self.recovery.publish(Path(result["candidate"]).read_bytes(), result["receipt"])
+                self._last_recovery_sha = fingerprint
+            except Exception as exc:
+                self.statusBar().showMessage(f"草稿恢复副本未更新：{exc}；请手动保存")
+            finally:
+                import shutil
+
+                shutil.rmtree(folder, ignore_errors=True)
+                process.deleteLater()
+
+        def failed(error):
+            if error == QProcess.ProcessError.FailedToStart:
+                finished(2)
+
+        process.finished.connect(finished)
+        process.errorOccurred.connect(failed)
+        process.start()
+
+    def stop_recovery_worker(self):
+        process = getattr(self, "_recovery_process", None)
+        if process is not None:
+            self._recovery_process = None
+            process.kill()
 
     def recover_draft(self):
         records = self.recovery.candidates()

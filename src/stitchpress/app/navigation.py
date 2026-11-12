@@ -63,7 +63,7 @@ def build_menus(w):
     for title, callback, shortcut in (
         ("导入全针 XSD…", w.import_reference_pattern, None),
         ("打开作品…", w.open_project, QKeySequence.StandardKey.Open),
-        ("保存作品", w.save, QKeySequence.StandardKey.Save),
+        ("保存作品", w.request_save, QKeySequence.StandardKey.Save),
         ("另存作品…", w.save_as, QKeySequence.StandardKey.SaveAs),
     ):
         item = QAction(title, w)

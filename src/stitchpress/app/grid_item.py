@@ -24,6 +24,10 @@ class StitchGridItem(QGraphicsItem):
         self.dx = (3 * k - design.width * self.cell) // 2
         self.dy = (4 * k - design.height * self.cell) // 2
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemUsesExtendedStyleOption)
+        self.set_highlight(highlight)
+
+    def set_highlight(self, highlight):
+        design = self.design
         palette = []
         self.tiles = {}
         for i, color in enumerate(design.palette):
@@ -49,6 +53,7 @@ class StitchGridItem(QGraphicsItem):
         rgb = colors[np.where(labels < 0, len(palette), labels)]
         self.overview = QImage(ImageQt(Image.fromarray(rgb))).copy()
         self.last_visible_cells = 0
+        self.update()
 
     def boundingRect(self):
         return self.bounds

@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, replace
+from functools import cached_property
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -26,7 +27,7 @@ class ThreadColor:
         if len(self.rgb) != 3 or any(type(c) is not int or not 0 <= c <= 255 for c in self.rgb):
             raise StitchPressError("RGB必须为三个0–255整数")
 
-    @property
+    @cached_property
     def key(self) -> str:
         return digest([self.brand, self.code, self.catalog_revision])
 
@@ -77,7 +78,7 @@ class Design:
         if any(len(p) != 2 or not all(isinstance(v, str) for v in p) for p in self.provenance):
             raise StitchPressError("母版来源须为具名文本记录")
 
-    @property
+    @cached_property
     def counts(self) -> tuple[int, ...]:
         result = [0] * len(self.palette)
         for row in self.labels:
@@ -86,7 +87,7 @@ class Design:
                     result[v] += 1
         return tuple(result)
 
-    @property
+    @cached_property
     def content_sha(self) -> str:
         return digest(
             {

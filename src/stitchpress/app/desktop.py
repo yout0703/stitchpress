@@ -4,8 +4,10 @@ import math
 import sys
 from dataclasses import asdict
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZIP_STORED
 
 from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QProcess, QRectF, Qt, QTimer, Signal
@@ -19,7 +21,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGraphicsScene,
     QGraphicsView,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -40,7 +41,6 @@ from stitchpress.core.importers import import_oxs
 from stitchpress.core.layout import Fabric, physical_layout
 from stitchpress.core.masks import annotation_masks
 from stitchpress.core.models import Design, PatchCell, ReviewRecord, apply_patch
-from stitchpress.core.render import screen_rgb
 from stitchpress.core.resources import assign_symbols, library_from_assets, natural_color_key
 from stitchpress.core.xsd import import_xsd
 from stitchpress.platform.files import atomic_write
@@ -62,6 +62,7 @@ from .local_features import LocalFeatures, PagePreview
 from .materials_ui import MaterialFeatures
 from .reference_ui import ReferenceFeatures
 from .store import Coordinator, Project
+from .symbol_picker import SymbolArtwork, SymbolPicker
 from .symbols import SymbolFeatures
 from .task_history import AIPolicy, TaskHistory, context_fingerprint
 from .task_ui import TaskFeatures, instance_id
@@ -91,6 +92,8 @@ class Canvas(QGraphicsView):
         self._polygon_points = []
         self._polygon_item = None
         self.selection_color = "#86deca"
+        self._grid_item = None
+        self._highlight = None
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
@@ -98,6 +101,7 @@ class Canvas(QGraphicsView):
         self.cancel_polygon()
         old_rect = self.sceneRect()
         self.scene().clear()
+        self._grid_item = None
         self.selection_item = None
         self._region_items = []
         self.scene().addPixmap(QPixmap.fromImage(ImageQt(image)))
@@ -110,12 +114,21 @@ class Canvas(QGraphicsView):
             self.fit()
 
     def set_design(self, design, highlight=None, fit=False):
+        if self._grid_item is not None and self._grid_item.design.content_sha == design.content_sha:
+            if self._highlight != highlight:
+                self._grid_item.set_highlight(highlight)
+                self._highlight = highlight
+            if fit:
+                self.fit()
+            return
         self.cancel_polygon()
         old_rect = self.sceneRect()
         self.scene().clear()
         self.selection_item = None
         self._region_items = []
         item = StitchGridItem(design, highlight)
+        self._grid_item = item
+        self._highlight = highlight
         self.scene().addItem(item)
         self.setSceneRect(item.boundingRect())
         if old_rect != self.sceneRect():
@@ -244,6 +257,14 @@ class Canvas(QGraphicsView):
             end = self.mapToScene(event.position().toPoint())
             rect = QRectF(self._start, end).normalized().intersected(self.sceneRect())
             self._start = None
+            if rect.width() <= 2 and rect.height() <= 2 and self._grid_item is not None:
+                item = self._grid_item
+                x = math.floor((end.x() - item.dx) / item.cell)
+                y = math.floor((end.y() - item.dy) / item.cell)
+                if 0 <= x < item.design.width and 0 <= y < item.design.height:
+                    rect = QRectF(
+                        item.dx + x * item.cell, item.dy + y * item.cell, item.cell, item.cell
+                    )
             if rect.width() > 2 and rect.height() > 2:
                 self.region_selected.emit(rect)
                 self.draw_selection(rect)
@@ -373,7 +394,12 @@ class Workbench(
 ):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("StitchPress · 绣印工坊 · 开发试验版")
+        from .language import install_chinese
+
+        install_chinese(QApplication.instance())
+        from stitchpress import __version__
+
+        self.setWindowTitle(f"StitchPress · 绣印工坊 · {__version__}")
         from .branding import application_icon
 
         self.setWindowIcon(application_icon())
@@ -395,6 +421,8 @@ class Workbench(
         self.dirty = False
         self.source_image = None
         self.history = []
+        self._save_process = None
+        self.symbol_artwork = SymbolArtwork()
         self._refreshing = False
         self.build_ui()
         self.set_theme(self.theme, persist=False)
@@ -489,6 +517,8 @@ class Workbench(
         self.document_title.setText(title)
         self.document_title.setToolTip(title)
         state = "有未保存修改" if self.dirty else "已保存" if self.project_path else "示例 · 未保存"
+        if self._save_process is not None:
+            state = "正在后台保存"
         if self.draft.source_schema < 2:
             state += " · 旧格式，保存将另存升级副本"
         self.document_state.setText(state)
@@ -502,6 +532,9 @@ class Workbench(
     @property
     def design(self):
         return Design.from_dict(self.draft.entities["design"])
+
+    def symbol_library(self):
+        return self.symbol_artwork.library(self.draft)
 
     def error(self, exc):
         QMessageBox.warning(self, "操作未完成", str(exc))
@@ -552,7 +585,7 @@ class Workbench(
         try:
             design = self.design
             fabric = Fabric(**self.draft.entities["fabric"])
-            library = library_from_assets(self.draft.entities["library"], self.draft.assets)
+            library = self.symbol_library()
             mapping = assign_symbols(design, library, self.draft.entities.get("mapping"))
             self.draft.entities["mapping"] = mapping
             self.color_limit.setMaximum(len(library.symbols))
@@ -564,23 +597,22 @@ class Workbench(
             for key, widget in self.margins.items():
                 widget.setText(getattr(fabric, key))
             physical = physical_layout(design.width, design.height, fabric)
+            dimensions = f"{Decimal(physical.width_cm):.2f} × {Decimal(physical.height_cm):.2f}"
             self.summary.setText(
                 f"{design.width} × {design.height} 格  /  {sum(design.counts):,} 针\n"
-                f"{len(mapping)} 色  /  画心 {physical.width_cm} × "
-                f"{physical.height_cm} cm\n"
+                f"{len(mapping)} 色  /  画心 {dimensions} cm\n"
                 f"生产 {physical.canvas_px[0]} × {physical.canvas_px[1]} px\n"
                 + ("已记录母版审核" if self.review_current() else "待审查/冻结")
             )
             self.metrics.setText(
-                f"{design.width} × {design.height} 格   |   {len(mapping)} 色   |   "
-                f"{physical.width_cm} × {physical.height_cm} cm"
+                f"{design.width} × {design.height} 格   |   {len(mapping)} 色   |   {dimensions} cm"
             )
             self.metrics.setToolTip(f"实际格距 {fabric.sx} × {fabric.sy} cm / 格")
             self.export_summary.setText(
                 f"{metadata['title']} / {metadata['code']}\n"
                 f"{design.width} × {design.height} 格 · "
                 f"{sum(design.counts):,} 针 · {len(mapping)} 色\n"
-                f"画心 {physical.width_cm} × {physical.height_cm} cm · "
+                f"画心 {dimensions} cm · "
                 f"生产 {physical.canvas_px[0]} × {physical.canvas_px[1]} px · {fabric.dpi} DPI\n"
                 + self.delivery_options_summary()
             )
@@ -594,57 +626,117 @@ class Workbench(
             )
             self.canvas.set_design(design, highlight=selected_index, fit=fit)
             self.refresh_annotations()
-            patch_index = self.patch_color.currentData()
-            self.table.setRowCount(0)
-            self.patch_color.clear()
-            self.patch_color.addItem("留空（不绣）", -1)
-            counts = design.counts
-            for i in sorted(
-                range(len(design.palette)),
-                key=lambda index: natural_color_key(design.palette[index]),
-            ):
-                color = design.palette[i]
-                self.patch_color.addItem(f"{color.brand} {color.code}  {color.name}", i)
-                if not counts[i]:
-                    continue
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                for col, value in enumerate(
-                    ("", f"{color.brand} {color.code}", f"{counts[i]:,}", "")
-                ):
-                    item = QTableWidgetItem(value)
-                    item.setData(Qt.ItemDataRole.UserRole, i)
-                    item.setToolTip(f"{color.brand} {color.code} · {color.name} · {counts[i]:,} 针")
-                    if col == 0:
-                        chip = QPixmap(24, 24)
-                        chip.fill(QColor(*color.rgb))
-                        item.setIcon(QIcon(chip))
-                    if col == 2:
-                        item.setTextAlignment(
-                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                        )
-                    if col == 3:
-                        symbol = library.by_key[mapping[color.key]]
-                        rgb = screen_rgb(symbol.image(), library.icc)
-                        item.setIcon(QIcon(QPixmap.fromImage(ImageQt(rgb))))
-                        item.setToolTip(f"{color.brand} {color.code} · 符号 {symbol.key}")
-                    self.table.setItem(row, col, item)
-                self.table.setRowHeight(row, 42)
-                if i == selected_index:
-                    self.table.selectRow(row)
-            if patch_index is not None:
-                self.patch_color.setCurrentIndex(max(0, self.patch_color.findData(patch_index)))
-            self.patch_button.setEnabled(self.region is not None)
-            self.patch_color.setEnabled(self.region is not None)
-            self.undo_button.setEnabled(bool(self.history))
-            self.symbol_button.setEnabled(bool(self.table.selectedItems()))
-            self.filter_palette()
+            self.refresh_palette(design, library, mapping, selected_index)
         finally:
             self._refreshing = False
         self.refresh_reference_pages()
 
+    def refresh_palette(self, design, library, mapping, selected_index):
+        palette_token = (design.content_sha, self.symbol_artwork.token, tuple(mapping.items()))
+        if palette_token == getattr(self, "_palette_token", None):
+            self.update_patch_controls()
+            self.symbol_button.setEnabled(bool(self.table.selectedItems()))
+            return
+        self._palette_token = palette_token
+        patch_index = self.patch_color.currentData()
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self.patch_color.clear()
+        self.patch_color.addItem("留空（不绣）", -1)
+        counts = design.counts
+        for i in sorted(
+            range(len(design.palette)),
+            key=lambda index: natural_color_key(design.palette[index]),
+        ):
+            color = design.palette[i]
+            chip = QPixmap(24, 24)
+            chip.fill(QColor(*color.rgb))
+            self.patch_color.addItem(QIcon(chip), f"{color.brand} {color.code}  {color.name}", i)
+            if not counts[i]:
+                continue
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            for col, value in enumerate(("", f"{color.brand} {color.code}", f"{counts[i]:,}", "")):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, i)
+                item.setToolTip(f"{color.brand} {color.code} · {color.name} · {counts[i]:,} 针")
+                if col == 0:
+                    chip = QPixmap(24, 24)
+                    chip.fill(QColor(*color.rgb))
+                    item.setIcon(QIcon(chip))
+                if col == 2:
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                    )
+                if col == 3:
+                    symbol = library.by_key[mapping[color.key]]
+                    item.setIcon(self.symbol_artwork.icon(symbol.key))
+                    item.setToolTip(f"{color.brand} {color.code} · 符号 {symbol.key}")
+                self.table.setItem(row, col, item)
+            self.table.setRowHeight(row, 42)
+            if i == selected_index:
+                self.table.selectRow(row)
+        self.table.blockSignals(False)
+        if patch_index is not None:
+            self.patch_color.setCurrentIndex(max(0, self.patch_color.findData(patch_index)))
+        self.update_patch_controls()
+        self.symbol_button.setEnabled(bool(self.table.selectedItems()))
+        self.filter_palette()
+
+    def update_patch_controls(self):
+        self.patch_button.setEnabled(self.region is not None)
+        self.patch_color.setEnabled(self.region is not None)
+        self.undo_button.setEnabled(bool(self.history))
+        tip = (
+            "将选区内的针格替换为指定线色；可撤销"
+            if self.region
+            else "请先单击一个针格，或拖动框选区域"
+        )
+        self.patch_button.setToolTip(tip)
+        self.patch_color.setToolTip(tip)
+
     def actual_pixels(self):
         self.canvas.actual_pixels()
+
+    def choose_grid_region(self):
+        design = self.design
+        dialog = QDialog(self)
+        dialog.setWindowTitle("选择针格区域")
+        form = QFormLayout(dialog)
+        controls = []
+        region = self.region or (0, 0, 1, 1)
+        for label, limit, value in zip(
+            ("起始列", "起始行", "结束列", "结束行"),
+            (design.width, design.height, design.width, design.height),
+            (region[0] + 1, region[1] + 1, region[2], region[3]),
+            strict=True,
+        ):
+            control = QSpinBox()
+            control.setRange(1, limit)
+            control.setValue(value)
+            control.setAccessibleName(label)
+            form.addRow(label, control)
+            controls.append(control)
+        buttons = QDialogButtonBox()
+        buttons.addButton("选择区域", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec():
+            x0, x1 = sorted((controls[0].value(), controls[2].value()))
+            y0, y1 = sorted((controls[1].value(), controls[3].value()))
+            bounds = self.canvas.sceneRect()
+            dx, dy = (
+                (bounds.width() - design.width * 18) // 2,
+                (bounds.height() - design.height * 18) // 2,
+            )
+            rect = QRectF(
+                dx + (x0 - 1) * 18, dy + (y0 - 1) * 18, (x1 - x0 + 1) * 18, (y1 - y0 + 1) * 18
+            )
+            self.select_region(rect)
+            self.canvas.draw_selection(rect)
+            self.canvas.centerOn(rect.center())
 
     def change_symbol(self):
         selected = self.table.selectedItems()
@@ -652,37 +744,16 @@ class Workbench(
             return self.error("请先选择一行线色")
         try:
             color = self.design.palette[selected[0].data(Qt.ItemDataRole.UserRole)]
-            library = library_from_assets(self.draft.entities["library"], self.draft.assets)
-            keys = [s.key for s in library.symbols]
-            mapping = self.draft.entities["mapping"].copy()
-            chosen, accepted = QInputDialog.getItem(
-                self,
-                "绑定符号",
-                "已被占用的符号将整体交换",
-                keys,
-                keys.index(mapping[color.key]),
-                False,
-            )
-            if not accepted or chosen == mapping[color.key]:
+            dialog = SymbolPicker(self, color)
+            if not dialog.exec() or not dialog.chosen:
                 return
-            other = next((k for k, v in mapping.items() if v == chosen), None)
-            if other is not None:
-                mapping[other] = mapping[color.key]
-            mapping[color.key] = chosen
-            assign_symbols(self.design, library, mapping)
-            self.draft.entities[f"mapping:{uuid4().hex}"] = {
-                "design_sha": self.design.content_sha,
-                "library_revision": library.revision,
-                "before": self.draft.entities["mapping"],
-                "after": mapping,
-                "manual": True,
-            }
+            if dialog.chosen == self.draft.entities["mapping"][color.key]:
+                return
             from .reference_actions import bind_symbol
 
-            bind_symbol(self.draft, color.key, chosen)
+            bind_symbol(self.draft, color.key, dialog.chosen)
             self.dirty = True
             self.refresh()
-            self.restore_ai_state()
         except Exception as exc:
             self.error(exc)
 
@@ -711,8 +782,8 @@ class Workbench(
             if region not in self.review_regions:
                 self.review_regions.append(region)
             self.region_label.setText(
-                f"{region[2] - region[0]} × {region[3] - region[1]} 格 · "
-                f"已查看 {len(self.review_regions)} 处局部"
+                f"第 {region[0] + 1}–{region[2]} 列 / {region[1] + 1}–{region[3]} 行 · "
+                f"{region[2] - region[0]} × {region[3] - region[1]} 格"
             )
             self.patch_color.setEnabled(True)
             self.patch_button.setEnabled(True)
@@ -721,6 +792,7 @@ class Workbench(
             self.region_label.setText("选区未覆盖针格，请在母版内重新框选")
             self.patch_color.setEnabled(False)
             self.patch_button.setEnabled(False)
+        self.update_patch_controls()
 
     def patch_region(self):
         try:
@@ -735,6 +807,9 @@ class Workbench(
                 for x in range(x0, x1)
                 if design.labels[y][x] != after
             )
+            if not cells:
+                self.statusBar().showMessage("选区已经是该线色或留空，无需替换")
+                return
             library = library_from_assets(self.draft.entities["library"], self.draft.assets)
             masks = annotation_masks(
                 self.draft.entities.get("annotations"),
@@ -877,9 +952,11 @@ class Workbench(
             for k in ("title", "code")
         ):
             raise StitchPressError("作品名称/客户号字段损坏")
+        self.stop_save_worker()
         if self.coordinator:
             self.coordinator.close()
         if hasattr(self, "recovery"):
+            self.stop_recovery_worker()
             self.recovery.clear()
             self._last_recovery_sha = None
         self.coordinator, self.project_path = coordinator, path
@@ -942,6 +1019,9 @@ class Workbench(
             self.error(exc)
 
     def save(self):
+        if self._save_process is not None:
+            self.statusBar().showMessage("后台保存仍在运行，请稍后再保存")
+            return False
         if self.reference_pending():
             self.error("有尚未应用的页面参数，请先保存 / 应用对应页面，或取消恢复")
             return False
@@ -977,6 +1057,16 @@ class Workbench(
         except Exception as exc:
             self.error(exc)
             return False
+
+    def request_save(self):
+        from .background_save import request_save
+
+        return request_save(self)
+
+    def stop_save_worker(self):
+        from .background_save import stop_save
+
+        stop_save(self)
 
     def save_as(self):
         if self.reference_pending():
@@ -1152,7 +1242,9 @@ class Workbench(
         output = folder / "result.json"
         job.update(operation=operation, output=str(output), base_sha=self.design.content_sha)
         snapshot = folder / "input.stitchpress"
-        payload = self.draft.encode()
+        # This is a disposable worker snapshot, not the saved customer project.
+        # Avoid compressing hundreds of MB before the process even starts.
+        payload = self.draft.encode(compression=ZIP_STORED)
         atomic_write(snapshot, payload)
         job["project"] = str(snapshot)
         if self.source_image and job.get("include_image", True):
@@ -1551,7 +1643,7 @@ class Workbench(
             folder = settings_dir() / "work" / uuid4().hex
             folder.mkdir(parents=True)
             snapshot = folder / "snapshot.stitchpress"
-            atomic_write(snapshot, self.draft.encode())
+            atomic_write(snapshot, self.draft.encode(compression=ZIP_STORED))
             destination = Path(parent) / ("StitchPress-" + uuid4().hex[:8])
             cancel_file = folder / "cancel"
             args = [
@@ -1621,6 +1713,8 @@ class Workbench(
             self.coordinator.close()
             self.coordinator = None
         self.recovery_timer.stop()
+        self.stop_save_worker()
+        self.stop_recovery_worker()
         self.recovery.clear()
         event.accept()
 

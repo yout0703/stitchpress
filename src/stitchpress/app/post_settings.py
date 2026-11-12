@@ -38,7 +38,7 @@ class MissingSettingsAssets(StitchPressError):
         super().__init__("设置资源缺失，可重新选择匹配SHA的原文件：" + ", ".join(missing))
 
 
-def settings_document(project, resource_folder):
+def settings_document(project, resource_folder, *, validate=True):
     entities = {k: copy.deepcopy(v) for k, v in project.entities.items() if k in KEYS}
     used = set()
 
@@ -55,10 +55,11 @@ def settings_document(project, resource_folder):
     walk(entities)
     assets = {name: project.assets[name] for name in used}
     # Reuse full container validation before writing portable settings.
-    check = Project.create()
-    check.entities = entities
-    check.assets = assets
-    check.encode()
+    if validate:
+        check = Project.create()
+        check.entities = entities
+        check.assets = assets
+        check.encode()
     record = dict(
         format=FORMAT,
         schema_version=1,
