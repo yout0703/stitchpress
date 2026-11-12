@@ -34,7 +34,9 @@ class TextSettingsDialog(QDialog):
         self.resize(760, 550)
         self.owner = owner
         layout = QVBoxLayout(self)
-        note = QLabel("分别设置各区域的文字。模板留空沿用基础文字；越界或缺字会在输出前提示。")
+        note = QLabel(
+            "模板留空沿用基础文字及样式；填写模板后可设置独立样式。越界或缺字会在输出前提示。"
+        )
         note.setWordWrap(True)
         layout.addWidget(note)
         tabs = QTabWidget()
@@ -43,6 +45,7 @@ class TextSettingsDialog(QDialog):
         self.controls = {}
         self.assets = {}
         self.extra_controls = {}
+        self.style_controls = {}
         for key, title in SLOTS.items():
             page = QWidget()
             columns = QHBoxLayout(page)
@@ -113,7 +116,18 @@ class TextSettingsDialog(QDialog):
             preview.setWordWrap(True)
             form.addRow("字段替换预览", preview)
             self.controls[key] = (fields, align, colors, preview)
+            self.style_controls[key] = [
+                fields["points"],
+                fields["dx_mm"],
+                fields["dy_mm"],
+                align,
+                *colors,
+                choose,
+                reset,
+            ]
             fields["template"].textChanged.connect(self.preview_fields)
+            fields["template"].textChanged.connect(self.update_style_controls)
+            enabled.toggled.connect(self.update_style_controls)
             tabs.addTab(page, title)
         label = QLabel("支持占位符：" + "  ".join("{" + key + "}" for key in sorted(FIELDS)))
         label.setWordWrap(True)
@@ -126,6 +140,17 @@ class TextSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.preview_fields()
+        self.update_style_controls()
+
+    def update_style_controls(self):
+        for key, (fields, _, _, _) in self.controls.items():
+            active = (
+                bool(fields["template"].text().strip())
+                and self.extra_controls[key]["enabled"].isChecked()
+            )
+            for widget in self.style_controls[key]:
+                widget.setEnabled(active)
+                widget.setToolTip("" if active else "填写文字模板并显示此栏后，可设置独立样式")
 
     def values(self):
         result = {}

@@ -84,6 +84,40 @@ def test_thread_text_commerce_pages_save_independent_state(qtbot, monkeypatch):
     w.close()
 
 
+def test_text_style_controls_require_template_and_preserve_applied_values(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    errors = []
+    monkeypatch.setattr(w, "error", errors.append)
+    panel = w.text_panel
+    editor = panel.editor
+    fields, align, colors, _ = editor.controls["production_top"]
+    assert all(not field.isEnabled() for field in editor.style_controls["production_top"])
+    assert not panel.pending()
+    fields["template"].setText("{code}")
+    assert all(field.isEnabled() for field in editor.style_controls["production_top"])
+    colors[0].setValue(254)
+    fields["points"].setText("14")
+    align.setCurrentIndex(align.findData("center"))
+    assert panel.pending()
+    assert panel.buttons.button(QDialogButtonBox.StandardButton.Save).isEnabled()
+    panel.apply()
+    assert not errors
+    panel.reload()
+    fields, align, colors, _ = panel.editor.controls["production_top"]
+    assert colors[0].value() == 254 and fields["points"].text() == "14"
+    assert align.currentData() == "center" and not panel.pending()
+    fields["template"].clear()
+    assert all(not field.isEnabled() for field in panel.editor.style_controls["production_top"])
+    assert panel.pending()  # Clearing the template explicitly restores the base text/style.
+    panel.reload()
+    assert panel.editor.controls["production_top"][0]["template"].text() == "{code}"
+    w.dirty = False
+    w.close()
+
+
 def test_import_swap_manual_binding_and_failed_folder_are_transactional(tmp_path):
     initial = demo_project()
     initial.entities["mapping"] = assign_symbols(
