@@ -151,6 +151,8 @@ def main():
     )
     assert not (root / "not-published").exists()
     cancellation.unlink()
+    failed = worker("failed", "not-a-supported-operation", expected_status="failed")
+    assert "未知工作进程操作" in failed["error"]
     if args.factory_project:
         changed = {**options.to_dict(), "jpeg_quality": 96}
         rejected = worker(
@@ -177,6 +179,7 @@ def main():
         previews=previews,
         gallery_items=17,
         cancellation_status=cancelled["status"],
+        failure_status=failed["status"],
         review_override_rejected=bool(args.factory_project),
         source_project_unchanged=True,
         native_os=os.name,

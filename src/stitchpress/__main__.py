@@ -4,11 +4,16 @@ from pathlib import Path
 
 
 def main():
-    # Windowed bootloaders can omit standard handles. Worker results/journals remain on disk.
-    if sys.stdout is None:
-        sys.stdout = open(os.devnull, "w", encoding="utf-8")
-    if sys.stderr is None:
-        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    # Windowed bootloaders may omit handles or inherit a CP1252 pipe. Frozen
+    # Python does not necessarily honor PYTHONUTF8 from its parent environment.
+    # Keep Chinese progress/errors printable, including cancellation, so an
+    # encoding exception cannot turn into a blocking Windows error dialog.
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        if stream is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+        elif hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     if len(sys.argv) > 1 and sys.argv[1] == "--internal-worker":
         from stitchpress.app.worker import run
 
