@@ -49,7 +49,16 @@ class SymbolArtwork:
         if key not in self.icons:
             with self.current.by_key[key].image() as image:
                 with screen_rgb(image, self.current.icc) as rgb:
-                    self.icons[key] = QIcon(QPixmap.fromImage(ImageQt(rgb)))
+                    # QIcon will shrink a pixmap but will not enlarge a 20px
+                    # source tile to the gallery's 40 logical pixels. Provide a
+                    # bounded 2x thumbnail without changing the original asset.
+                    thumbnail = QPixmap.fromImage(ImageQt(rgb)).scaled(
+                        80,
+                        80,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.FastTransformation,
+                    )
+                    self.icons[key] = QIcon(thumbnail)
         return self.icons[key]
 
 

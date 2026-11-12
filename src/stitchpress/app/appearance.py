@@ -215,7 +215,7 @@ def apply_appearance(app: QApplication, root, theme):
         QToolButton[role="quiet"] { padding-right: 24px; }
         QListWidget#symbolGallery { background: $panel; padding: 8px; }
         QListWidget#symbolGallery::item { border: 1px solid transparent;
-            border-radius: 6px; padding: 8px; }
+            border-radius: 6px; padding: 0; }
         QListWidget#symbolGallery::item:selected { background: $selected; border-color: $accent; }
         QListWidget#symbolGallery::item:hover { background: $hover; }
         QTabWidget::pane { border: none; background: $panel; top: 8px; }

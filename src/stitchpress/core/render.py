@@ -22,6 +22,13 @@ RED = (0, 255, 255, 0)
 MAX_RENDER_PIXELS = 80_000_000  # Single-image guard; production export uses a separate band writer.
 
 
+def ruler_label(count: int, pitch: str) -> str:
+    # Printed text needs useful precision, not a repeating Decimal expansion.
+    # Keep the physical line, cell boundaries and output dimensions at full precision.
+    cm = f"{Decimal(pitch) * count:.4f}".rstrip("0").rstrip(".")
+    return f"{count} cells = {cm} cm"
+
+
 @dataclass(frozen=True)
 class CellRaster:
     window: tuple[int, int, int, int]
@@ -229,8 +236,7 @@ class Renderer:
         self.text(
             image,
             (plan.origin[0], ruler_y + sc(22)),
-            f"{ruler_cells} cells = {Decimal(self.fabric.sx) * ruler_cells} cm "
-            f"| Print {plan.scale}:1",
+            ruler_label(ruler_cells, self.fabric.sx) + f" | Print {plan.scale}:1",
             32,
         )
         self.text(
@@ -259,7 +265,7 @@ class Renderer:
         self.cells(image, raster)
         draw.rectangle((0, 0, image.width - 1, image.height - 1), outline=RED, width=sc(6))
         draw.rectangle(
-            (xs[0] - sc(2), ys[0] - sc(2), xs[-1] + sc(1), ys[-1] + sc(1)),
+            (xs[0] - sc(2), ys[0] - sc(2), xs[-1] + sc(2) - 1, ys[-1] + sc(2) - 1),
             outline=BLACK,
             width=sc(2),
         )
@@ -279,7 +285,7 @@ class Renderer:
         y = ys[-1] + sc(90)
         length = px(Decimal(self.fabric.sx) * count, self.fabric.dpi)
         draw.line((xs[0], y, xs[0] + length, y), fill=BLACK, width=sc(3))
-        label = f"{count} cells = {Decimal(self.fabric.sx) * count} cm"
+        label = ruler_label(count, self.fabric.sx)
         self.text(image, (xs[0], y + sc(22)), label, 32)
         # Fit measured entries into free perimeter. Never increase fabric or shrink text.
         row_h = sc(96)

@@ -230,3 +230,49 @@ def test_editor_reload_hides_retired_buttons_and_preserves_compact_fields(qtbot)
     assert len(visible) == 1 and visible[0].text() == "12"
     assert visible[0].data(Qt.ItemDataRole.UserRole) == "int:12"
     w.close()
+
+
+def test_gallery_displays_full_three_and_four_character_ids_across_columns(qtbot):
+    from PySide6.QtCore import QSize, Qt
+    from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    from stitchpress.core.identity import digest
+    from stitchpress.core.resources import demo_library, parse_symbol
+
+    library = demo_library()
+    symbols = tuple(
+        parse_symbol(s.tile, f"0{i + 61}", s.filename) for i, s in enumerate(library.symbols)
+    )
+    library = replace(library, symbols=symbols, revision=digest([s.key for s in symbols]))
+    project = demo_project()
+    project.entities["library"], assets = library_assets(library)
+    project.assets.update(assets)
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.set_project(project)
+    w.resize(1440, 980)
+    w.show_page(6)
+    w.show()
+    qtbot.wait(100)
+    view = w.ref_symbols
+    assert view.item(0).text() == "061"
+    assert view.item(39).text() == "0100"
+    for i in (0, 1, 5, 20, 39, 65):
+        item = view.item(i)
+        view.scrollToItem(item)
+        qtbot.wait(10)
+        index = view.indexFromItem(item)
+        option = QStyleOptionViewItem()
+        view.initViewItemOption(option)
+        view.itemDelegate().initStyleOption(option, index)
+        option.rect = view.visualRect(index)
+        rect = view.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, view)
+        assert rect.width() >= view.fontMetrics().horizontalAdvance(item.text())
+        assert item.icon().actualSize(QSize(40, 40)) == QSize(40, 40)
+        assert option.textElideMode == Qt.TextElideMode.ElideNone
+    w.ref_symbol_search.setText("0100")
+    visible = [view.item(i) for i in range(view.count()) if not view.item(i).isHidden()]
+    assert len(visible) == 1 and visible[0].text() == "0100"
+    view.setCurrentItem(visible[0])
+    assert view.currentItem().data(Qt.ItemDataRole.UserRole) == "str:0100"
+    w.close()
