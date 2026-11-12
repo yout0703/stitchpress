@@ -31,6 +31,10 @@ jobs:
     timeout-minutes: 35
     env:
       QT_QPA_PLATFORM: offscreen
+      # Windows runners may default redirected Python output to CP1252.
+      # Reports and validation paths contain Chinese; use UTF-8 for the whole toolchain.
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
