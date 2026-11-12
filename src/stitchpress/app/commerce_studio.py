@@ -98,7 +98,7 @@ class PreviewBoard(QWidget):
             QTimer.singleShot(0, self.refresh)
 
     def check_stale(self):
-        if not self.isVisible() or not self.loaded_sha:
+        if not self.isVisible() or not self.loaded_sha or self.process is not None:
             return
         try:
             stale = fingerprint(self.snapshot()) != self.loaded_sha
@@ -137,6 +137,10 @@ class PreviewBoard(QWidget):
             process.setArguments(worker_arguments("worker", [str(job_path)]))
             process.finished.connect(lambda code, status: self.finished(process, key, code))
             process.errorOccurred.connect(lambda error: self.process_error(process))
+            self.list.setEnabled(False)
+            self.pixmap = QPixmap()
+            self.canvas.setPixmap(QPixmap())
+            self.canvas.setText("正在生成当前模板…")
             process.start()
             self.status.setText("正在生成 7 张详情 + 5 张方图…")
             self.cancel_button.show()
@@ -147,6 +151,7 @@ class PreviewBoard(QWidget):
         if process is self.process and process.error() == QProcess.ProcessError.FailedToStart:
             self.status.setText("无法启动预览进程：" + process.errorString())
             self.process = None
+            self.list.setEnabled(True)
             self.cancel_button.hide()
 
     def finished(self, process, expected, code):
@@ -154,6 +159,7 @@ class PreviewBoard(QWidget):
             process.deleteLater()
             return
         self.process = None
+        self.list.setEnabled(True)
         self.cancel_button.hide()
         try:
             if fingerprint(self.snapshot()) != expected:
@@ -183,6 +189,7 @@ class PreviewBoard(QWidget):
             process.waitForFinished(1500)
             process.deleteLater()
             self.status.setText("预览已取消 · 作品未改变")
+        self.list.setEnabled(True)
         self.cancel_button.hide()
 
     def present(self, result):
