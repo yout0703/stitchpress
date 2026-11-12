@@ -537,7 +537,7 @@ class Workbench(
     def delivery_options_summary(self):
         reference = ReferenceSettings(**self.draft.entities.get("reference", {}))
         showcase = ShowcaseSettings(**self.draft.entities.get("showcase", {}))
-        style = {"symbols": "黑白符号", "pale": "浅底符号", "color": "原色符号"}[reference.style]
+        style = {"symbols": "符号库原色", "pale": "浅底符号", "color": "原色符号"}[reference.style]
         return (
             f"查图 {reference.paper if reference.paper != 'custom' else '自定义'} · "
             f"{'横向' if reference.landscape else '竖向'} · {reference.scale}:1 · "

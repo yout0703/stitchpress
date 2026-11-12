@@ -191,7 +191,7 @@ class SpecificationDialog(QDialog):
         self.overlap.setRange(0, 30)
         self.style = QComboBox()
         for text, value in (
-            ("黑白符号", "symbols"),
+            ("符号库原色", "symbols"),
             ("浅色底＋符号", "pale"),
             ("原色底＋符号", "color"),
         ):
