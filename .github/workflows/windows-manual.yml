@@ -1,8 +1,30 @@
-name: Windows local-core build (manual)
+name: Windows x64 build and verification
 on:
   workflow_dispatch:
+  push:
+    branches: [main, codex/initial-implementation]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'fixtures/**'
+      - 'tools/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/windows-manual.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'fixtures/**'
+      - 'tools/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/windows-manual.yml'
 permissions:
   contents: read
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   windows-x64:
     runs-on: windows-2022
@@ -20,7 +42,9 @@ jobs:
       - run: uv sync --locked --all-groups
       - run: uv run --all-groups ruff check src tests tools
       - run: uv run --all-groups ruff format --check src tests tools
-      - run: uv run --all-groups pytest -q --junitxml=reports/local/windows/tests.xml
+      - name: Run full Windows test suite
+        timeout-minutes: 15
+        run: uv run --all-groups pytest -q -o faulthandler_timeout=180 --durations=12 --junitxml=reports/local/windows/tests.xml
       - run: uv run --all-groups python tools/build_desktop.py
       - name: Verify packaged executable and Chinese installation directory
         shell: pwsh
@@ -43,11 +67,12 @@ jobs:
           path: |
             reports/local/windows/
             dist/windows/build.log
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: warn
       - name: Retain unsigned local test application
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-app-${{ github.run_id }}
           path: dist/windows/StitchPress-windows-x64-local.zip
-          retention-days: 7
+          retention-days: 30
+          if-no-files-found: error
