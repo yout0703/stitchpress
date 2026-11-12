@@ -1,3 +1,4 @@
+import json
 import re
 from xml.etree import ElementTree as XML
 
@@ -93,7 +94,14 @@ def import_oxs(data: bytes) -> Design:
             h,
             palette,
             labels,
-            provenance=(("source_sha", sha256(data)), ("parser", "oxs-1-zero-based-v1")),
+            provenance=(
+                ("source_sha", sha256(data)),
+                ("parser", "oxs-1-zero-based-v1"),
+                (
+                    "import_report",
+                    json.dumps(dict(title=props.get("charttitle", "")), ensure_ascii=False),
+                ),
+            ),
         )
     except StitchPressError:
         raise
@@ -139,3 +147,14 @@ def export_oxs(design: Design) -> bytes:
                 XML.SubElement(stitches, "stitch", x=str(x), y=str(y), palindex=str(i + 1))
     XML.SubElement(root, "backstitches")
     return XML.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def import_chart(data: bytes, format: str) -> Design:
+    """Explicit codec dispatch, shared by import and unchanged-original checks."""
+    if format == "oxs":
+        return import_oxs(data)
+    if format == "xsd":
+        from .xsd import import_xsd
+
+        return import_xsd(data)
+    raise StitchPressError("图纸格式不支持，请选择全针 XSD 或 OXS")

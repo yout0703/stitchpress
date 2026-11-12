@@ -219,11 +219,13 @@ def apply_appearance(app: QApplication, root, theme):
         QListWidget#symbolGallery::item:selected { background: $selected; border-color: $accent; }
         QListWidget#symbolGallery::item:hover { background: $hover; }
         QTabWidget::pane { border: none; background: $panel; top: 8px; }
-        QTabBar::tab { background: transparent; color: $muted; padding: 10px 16px;
-            border-bottom: 2px solid transparent; }
+        QTabBar { background: $bg; border: none; qproperty-drawBase: false; }
+        QTabBar::tab { background: $bg; color: $muted; padding: 10px 16px;
+            border: none; border-bottom: 2px solid $line; font-weight: 600; }
         QTabBar::tab:selected { color: $accent; border-bottom: 2px solid $accent;
-            font-weight: 600; }
-        QTabBar::tab:hover { background: $hover; }
+            background: $bg; }
+        QTabBar::tab:hover:!selected { background: $bg; color: $text; }
+        QTabBar::tab:hover:selected { background: $bg; color: $accent; }
         QStatusBar { background: $bg; color: $muted; font-size: 11px; }
         QStatusBar::item { border: none; }
         QToolTip { background: $raised; color: $text; border: 1px solid $line;

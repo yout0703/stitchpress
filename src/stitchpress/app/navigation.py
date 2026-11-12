@@ -61,7 +61,7 @@ def build_menus(w):
     bar.setNativeMenuBar(False)
     files = bar.addMenu("文件")
     for title, callback, shortcut in (
-        ("导入全针 XSD…", w.import_reference_pattern, None),
+        ("导入图纸（XSD / OXS）…", w.import_reference_pattern, None),
         ("打开作品…", w.open_project, QKeySequence.StandardKey.Open),
         ("保存作品", w.request_save, QKeySequence.StandardKey.Save),
         ("另存作品…", w.save_as, QKeySequence.StandardKey.SaveAs),

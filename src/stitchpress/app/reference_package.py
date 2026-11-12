@@ -16,11 +16,11 @@ from stitchpress.core.commerce import CommerceRenderer, CommerceSettings
 from stitchpress.core.conversion import normalize_image
 from stitchpress.core.errors import Cancelled, StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256, sha256_file
+from stitchpress.core.importers import import_chart
 from stitchpress.core.post import PostSettings, ThreadPlan, save_rgb, write_thread_workbook
 from stitchpress.core.reading import reading_layout
 from stitchpress.core.render import MAX_RENDER_PIXELS, Renderer, stitch_preview
 from stitchpress.core.streaming import MAX_STREAM_PIXELS, save_production_stream
-from stitchpress.core.xsd import import_xsd
 from stitchpress.platform.files import atomic_write, exclusive_lock
 
 from .commerce import commerce_context
@@ -46,11 +46,15 @@ def render_context(project):
 
 def input_pattern(project):
     record = project.entities.get("pattern_input")
-    if not record or record.get("format") != "xsd" or record.get("asset") not in project.assets:
-        raise StitchPressError("参考流程需要原始XSD记录；请从文件页导入全针XSD")
+    if (
+        not record
+        or record.get("format") not in {"xsd", "oxs"}
+        or record.get("asset") not in project.assets
+    ):
+        raise StitchPressError("输出原稿需要原始图纸记录；请从作品页导入全针 XSD 或 OXS")
     raw = project.assets[record["asset"]]
     if sha256(raw) != record.get("sha256"):
-        raise StitchPressError("原始XSD字节已改变")
+        raise StitchPressError("原始图纸字节已改变")
     return record, raw
 
 
@@ -77,10 +81,11 @@ def preflight(project, options=None, *, demo=False):
     if not context["code"].strip():
         raise StitchPressError("请先确认货号，保留前导零")
     if "original" in options.targets:
-        _, raw = input_pattern(project)
-        if import_xsd(raw).content_sha != design.content_sha:
+        original, raw = input_pattern(project)
+        if import_chart(raw, original["format"]).content_sha != design.content_sha:
+            format_name = original["format"].upper()
             raise StitchPressError(
-                "当前针格已改变，原XSD不能冒充当前版本；请选择不含原XSD的目标或恢复原稿"
+                f"当前针格已改变，原{format_name}不能冒充当前版本；请选择不含原稿的目标或恢复原稿"
             )
     source = project.entities.get("source")
     commerce = CommerceSettings(**project.entities.get("commerce", {}))
@@ -98,7 +103,7 @@ def preflight(project, options=None, *, demo=False):
         if library.usage != "customer-imported" or not library.icc:
             raise StitchPressError("正式生产需要客户符号库及有效CMYK ICC；示例库仅供草稿检查")
         if needs_source and not source.get("correspondence_confirmed", False):
-            raise StitchPressError("请人工确认原图与XSD对应，哈希不能证明是同一作品")
+            raise StitchPressError("请人工确认原图与图纸对应，哈希不能证明是同一作品")
         review = project.entities.get("post_review", {})
         configured = PostSettings(**project.entities.get("post", {}))
         # A reviewed full set may be exported as a subset; geometry/coefficients cannot change.
@@ -251,8 +256,8 @@ def export_reference(
         stage("planning")
         if "original" in options.targets:
             stage("copying-original")
-            _, raw = input_pattern(project)
-            path = staging / f"{name}.xsd"
+            original, raw = input_pattern(project)
+            path = staging / f"{name}.{original['format']}"
             atomic_write(path, raw)
             record(path, dict(original_sha=sha256(raw), byte_preserved=True))
         if "source" in options.targets:

@@ -62,7 +62,7 @@ TARGET_NAMES = dict(
     zip(
         POST_TARGETS,
         (
-            "原始 XSD（字节保留）",
+            "原始图纸 XSD / OXS（字节保留）",
             "对应图 JPG",
             "生产画布 TIFF",
             "整张查图 TIFF",
@@ -384,7 +384,8 @@ class ReferenceFeatures:
         sl.setContentsMargins(20, 20, 20, 20)
         sl.setSpacing(16)
         sl.addWidget(text("图纸与对应原图"))
-        import_action = action("导入 XSD…", self.import_reference_pattern)
+        import_action = action("导入图纸…", self.import_reference_pattern)
+        import_action.setToolTip("支持全针 XSD / OXS，保留原始文件")
         row(
             sl,
             import_action,
@@ -392,7 +393,7 @@ class ReferenceFeatures:
             menu_button(
                 "更多",
                 (
-                    ("使用 XSD 文件名作为货号", self.accept_code_suggestion),
+                    ("使用图纸文件名作为货号", self.accept_code_suggestion),
                     ("查找同名对应图…", self.discover_companions),
                 ),
             ),
@@ -404,7 +405,7 @@ class ReferenceFeatures:
         self.ref_dimensions = text("")
         self.ref_dimensions.setProperty("role", "heading")
         sl.addWidget(self.ref_dimensions)
-        self.source_confirm = QCheckBox("已核对：对应原图与 XSD 为同一作品")
+        self.source_confirm = QCheckBox("已核对：对应原图与图纸为同一作品")
         self.source_confirm.toggled.connect(self.confirm_correspondence)
         sl.addWidget(self.source_confirm)
         self.ref_source_details = text("")
@@ -449,6 +450,7 @@ class ReferenceFeatures:
         layout = QVBoxLayout(page)
         page_heading(layout, "印花与图纸", "调整实际尺寸、阅读图纸和标题页脚。")
         self.print_tabs = QTabBar()
+        self.print_tabs.setDrawBase(False)
         self.print_tabs.setExpanding(False)
         for title in ("尺寸与布料", "阅读图纸", "标题与页脚", "预设"):
             self.print_tabs.addTab(title)
@@ -824,7 +826,7 @@ class ReferenceFeatures:
         self.source_confirm.setEnabled(bool(source))
         record = self.draft.entities.get("pattern_input", {})
         self.ref_input_report.setText(
-            f"图纸  {record.get('filename', '当前为内置示例，请导入自己的 XSD')}\n"
+            f"图纸  {record.get('filename', '当前为内置示例，请导入 XSD / OXS 图纸')}\n"
             f"原图  {source.get('filename', source.get('asset', '尚未添加'))}"
         )
         self.ref_dimensions.setText(
@@ -937,7 +939,10 @@ class ReferenceFeatures:
 
     def import_reference_pattern(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "导入已有全针XSD（其他针法会停止）", "", "Pattern Maker (*.xsd)"
+            self,
+            "导入全针图纸",
+            "",
+            "十字绣图纸 (*.xsd *.oxs);;Pattern Maker (*.xsd);;Open Cross Stitch (*.oxs)",
         )
         if not path:
             return
@@ -951,7 +956,10 @@ class ReferenceFeatures:
             self.dirty = True
             self._reference_path = Path(path)
             self.refresh()
-            self.statusBar().showMessage("全针 XSD 已导入，原件与旧修订已留底；请确认货号及对应图")
+            format_name = updated.entities["pattern_input"]["format"].upper()
+            self.statusBar().showMessage(
+                f"全针 {format_name} 已导入，原件与旧修订已留底；请确认货号及对应图"
+            )
         except Exception as exc:
             dialog = QMessageBox(self)
             dialog.setWindowTitle("图纸未导入")
@@ -973,7 +981,7 @@ class ReferenceFeatures:
             path = getattr(self, "_reference_path", None)
             if not path:
                 chosen, _ = QFileDialog.getOpenFileName(
-                    self, "重新定位XSD以发现同名对应图", "", "XSD (*.xsd)"
+                    self, "重新定位图纸以发现同名对应图", "", "十字绣图纸 (*.xsd *.oxs)"
                 )
                 if not chosen:
                     return
@@ -982,7 +990,7 @@ class ReferenceFeatures:
                 from stitchpress.core.identity import sha256
 
                 if sha256(path.read_bytes()) != record.get("sha256"):
-                    raise StitchPressError("所选XSD与当前原稿SHA不同")
+                    raise StitchPressError("所选图纸与当前原稿SHA不同")
             candidates = companion_candidates(path)
             if not candidates:
                 return self.statusBar().showMessage(

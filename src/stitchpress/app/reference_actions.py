@@ -5,9 +5,11 @@ import json
 import re
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZIP_STORED
 
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import digest, sha256
+from stitchpress.core.importers import import_chart
 from stitchpress.core.resources import (
     SymbolLibrary,
     assign_symbols,
@@ -16,13 +18,13 @@ from stitchpress.core.resources import (
     normalize_symbol_image,
     parse_symbol,
 )
-from stitchpress.core.xsd import import_xsd
 
 
 def import_pattern(project, path):
     path = Path(path)
     raw = path.read_bytes()
-    design = import_xsd(raw)
+    format = path.suffix.lower().removeprefix(".")
+    design = import_chart(raw, format)
     library = library_from_assets(project.entities["library"], project.assets)
     used = sum(count > 0 for count in design.counts)
     if used > len(library.symbols):
@@ -47,12 +49,12 @@ def import_pattern(project, path):
     ):
         if old := updated.entities.pop(key, None):
             updated.entities[f"{key}:{uuid4().hex}"] = old
-    asset = f"sources/{sha256(raw)}.xsd"
+    asset = f"sources/{sha256(raw)}.{format}"
     updated.assets[asset] = raw
     updated.entities.update(
         design=design.to_dict(),
         mapping=mapping,
-        pattern_input=dict(asset=asset, format="xsd", sha256=sha256(raw), filename=path.name),
+        pattern_input=dict(asset=asset, format=format, sha256=sha256(raw), filename=path.name),
         mapping_policy=dict(algorithm="color-nearest-v1", manual_first=True),
     )
     if project.entities.get("metadata", {}).get("code") == "DEMO001":
@@ -62,7 +64,7 @@ def import_pattern(project, path):
             "title": report.get("title", "").strip() or path.stem,
             "code": path.stem,
         }
-    updated.encode()
+    updated.encode(compression=ZIP_STORED)
     return updated
 
 
