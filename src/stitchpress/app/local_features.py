@@ -95,6 +95,7 @@ class SpecificationDialog(QDialog):
         }
         for field in self.fabric_fields.values():
             field.setMaximumWidth(110)
+            field.textChanged.connect(field.setToolTip)
         self.margin_unit = QComboBox()
         for text, unit in (("厘米 cm", "cm"), ("毫米 mm", "mm"), ("实际针格数", "cells")):
             self.margin_unit.addItem(text, unit)
@@ -340,6 +341,8 @@ class SpecificationDialog(QDialog):
         self.fabric_source, self.fabric_dpi = fabric.source, fabric.dpi
         for key, field in self.fabric_fields.items():
             field.setText(getattr(fabric, key))
+            field.setCursorPosition(0)
+            field.setToolTip(field.text())
         self.margin_unit.blockSignals(True)
         self.margin_unit.setCurrentIndex(self.margin_unit.findData(fabric.margin_unit))
         self.margin_unit.blockSignals(False)
@@ -352,6 +355,7 @@ class SpecificationDialog(QDialog):
             pitch = fabric.sx if key in {"left", "right"} else fabric.sy
             display = margin_value(getattr(fabric, key), fabric.margin_unit, pitch, to_cm=False)
             self.fabric_fields[key].setText(display)
+            self.fabric_fields[key].setCursorPosition(0)
             self._margin_baseline[key] = (display, getattr(fabric, key), pitch)
         self.paper.setCurrentIndex(["A4", "A3", "A2", "custom", "whole"].index(reference.paper))
         self.custom_w.setText(reference.custom_width_cm)
@@ -454,6 +458,8 @@ class SpecificationDialog(QDialog):
             theoretical = Fabric.theoretical(self.fabric_fields["nominal_ct"].text())
             for key in ("sx", "sy"):
                 self.fabric_fields[key].setText(getattr(theoretical, key))
+                self.fabric_fields[key].setCursorPosition(0)
+                self.fabric_fields[key].setToolTip(self.fabric_fields[key].text())
             self.fabric_source = theoretical.source
         except Exception as exc:
             QMessageBox.warning(self, "CT 无效", str(exc))
@@ -466,6 +472,7 @@ class SpecificationDialog(QDialog):
             )
             for key in ("sx", "sy"):
                 self.fabric_fields[key].setText(getattr(resized, key))
+                self.fabric_fields[key].setCursorPosition(0)
             self.fabric_source = resized.source
         except Exception as exc:
             QMessageBox.warning(self, "尺寸未应用", str(exc))

@@ -45,9 +45,10 @@ class PreviewBoard(QWidget):
     ready = Signal(dict)
     source_requested = Signal()
 
-    def __init__(self, snapshot, parent=None):
+    def __init__(self, snapshot, parent=None, *, source_navigation=False):
         super().__init__(parent)
         self.snapshot = snapshot
+        self.source_navigation = source_navigation
         self.catalog = False
         self.process = None
         self.pages = []
@@ -256,7 +257,9 @@ class PreviewBoard(QWidget):
             return
         page = self.pages[row]
         self.source_button.setVisible(
-            "error" in page and any(word in page["error"] for word in ("原图", "来源"))
+            self.source_navigation
+            and "error" in page
+            and any(word in page["error"] for word in ("原图", "来源"))
         )
         self.pixmap = QPixmap(page.get("preview", ""))
         if self.pixmap.isNull():

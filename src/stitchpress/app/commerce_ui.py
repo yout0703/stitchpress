@@ -89,7 +89,9 @@ class CommerceDialog(QDialog):
         tabs = self.tabs = QTabWidget()
         from .commerce_studio import PreviewBoard
 
-        self.board = PreviewBoard(self.snapshot, self)
+        self.board = PreviewBoard(
+            self.snapshot, self, source_navigation=hasattr(owner, "show_page")
+        )
         if hasattr(owner, "show_page"):
             self.board.source_requested.connect(lambda: owner.show_page(3))
         inspector = QWidget()
