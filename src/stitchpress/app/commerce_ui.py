@@ -335,13 +335,22 @@ class CommerceDialog(QDialog):
         )
 
     def save_personal(self):
-        from .commerce_templates import save_preset
+        from .commerce_templates import load_preset, save_preset
 
         try:
             preset = self.make_personal()
             if preset is not None:
                 folder = settings_dir() / "commerce-templates"
                 folder.mkdir(parents=True, exist_ok=True)
+                versions = []
+                for old in folder.glob("*.stitchtemplate"):
+                    try:
+                        info = load_preset(old).entities["commerce_preset"]
+                        if info["name"] == preset.entities["commerce_preset"]["name"]:
+                            versions.append(info["version"])
+                    except Exception:
+                        continue
+                preset.entities["commerce_preset"]["version"] = max(versions, default=0) + 1
                 save_preset(
                     preset, folder / (preset.entities["commerce_preset"]["id"] + ".stitchtemplate")
                 )

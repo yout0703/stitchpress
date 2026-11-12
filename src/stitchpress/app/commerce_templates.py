@@ -52,7 +52,15 @@ def preset_project(settings, assets, metadata, name, *, inherited_font=None):
             literal = metadata.get(field, "")
             if literal and literal not in ("{title}", "{code}"):
                 data[key] = data[key].replace(literal, "{" + field + "}")
-    if not data["font_asset"] and inherited_font:
+    assets = dict(assets)
+    if not data["font_asset"] and data["template"]:
+        from stitchpress.core.commerce_layout import commerce_font
+
+        raw = commerce_font()
+        font_name = "resources/commerce-fonts/" + sha256(raw) + ".otf"
+        assets[font_name] = raw
+        data["font_asset"] = font_name
+    elif not data["font_asset"] and inherited_font:
         data["font_asset"] = inherited_font
     value = CommerceSettings(**data)
     used = {scene["background_asset"] for scene in value.scenes if scene.get("background_asset")}
@@ -88,7 +96,8 @@ def load_preset(path):
     if (
         set(project.entities) != {"metadata", "commerce", "commerce_preset"}
         or info.get("format") != "StitchPress.Commerce.Preset.v1"
-        or info.get("version") != 1
+        or type(info.get("version")) is not int
+        or info["version"] < 1
         or not isinstance(info.get("name"), str)
     ):
         raise StitchPressError("不是支持的商品模板预设")

@@ -72,7 +72,9 @@ def test_template_switch_preserves_overrides_classic_and_portable_resources(tmp_
     preset = preset_project(reset, assets, p.entities["metadata"], "我的家居")
     save_preset(preset, tmp_path / "portable.stitchtemplate")
     reopened = load_preset(tmp_path / "portable.stitchtemplate")
-    assert reopened.assets == assets
+    assert reopened.assets[asset] == assets[asset]
+    assert reopened.entities["commerce"]["font_asset"] in reopened.assets
+    assert len(reopened.assets) == 2
     assert set(reopened.entities) == {"metadata", "commerce", "commerce_preset"}
     assert reopened.entities["commerce"]["title"] == "{title} · {code}"
     assert reopened.entities["metadata"] == {"title": "", "code": ""}
@@ -167,3 +169,17 @@ def test_native_picker_cancel_apply_undo_and_late_worker(qtbot, tmp_path, monkey
     assert "参数已改变" in board.status.text() and not board.pages
     board.stop()
     picker.board.stop()
+
+
+def test_template_font_does_not_inherit_unrelated_production_font(tmp_path):
+    from pathlib import Path
+
+    from stitchpress.core import text
+
+    p = source_project()
+    font = Path(text.__file__).parents[1] / "resources/fonts/NotoSans-Regular.ttf"
+    p.assets["resources/latin.ttf"] = font.read_bytes()
+    p.entities["output_font"] = dict(asset="resources/latin.ttf", name="Latin")
+    p.entities["commerce"] = apply_template(CommerceSettings(), templates()[0]).to_dict()
+    result = render_sheet(p, tmp_path / "separate-font")
+    assert all("error" not in page for page in result["pages"])

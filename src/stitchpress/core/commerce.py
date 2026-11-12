@@ -160,6 +160,10 @@ class CommerceRenderer:
             if settings.font_asset not in assets:
                 raise ResourceError("商品模板缺少内嵌字体")
             context["font_data"] = assets[settings.font_asset]
+        elif settings.template:
+            from .commerce_layout import commerce_font
+
+            context["font_data"] = commerce_font()
         self.template_sha = template_fingerprint(settings.template)
         self.context, self.settings, self.assets, self.demo = context, settings, assets, demo
         self.design = context["design"]

@@ -254,7 +254,12 @@ class TemplatePicker(QDialog):
             try:
                 preset = load_preset(path)
                 self.entries.append(
-                    ("我的模板 · " + preset.entities["commerce_preset"]["name"], preset)
+                    (
+                        "我的模板 · "
+                        + preset.entities["commerce_preset"]["name"]
+                        + f" · v{preset.entities['commerce_preset']['version']}",
+                        preset,
+                    )
                 )
             except Exception:
                 self.preset_errors.append(path.name)
