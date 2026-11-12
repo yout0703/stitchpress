@@ -284,7 +284,8 @@ class Renderer:
         row_h = sc(96)
         max_code = max(self.font(sc(56)).getlength(c.code) for _, c in self.entries)
         entry_w = sc(220) + ceil(max_code)
-        bottom_reserve = sc(180) if self.text_layers.get("production_bottom") else 0
+        bottom_layer = self.text_layers.get("production_bottom")
+        bottom_reserve = sc(180) if bottom_layer and bottom_layer.enabled else 0
         rects = [
             (xs[-1] + sc(65), ys[0], image.width - sc(30), image.height - sc(60) - bottom_reserve),
             (sc(30), ys[0], xs[0] - sc(150), image.height - sc(60) - bottom_reserve),
@@ -303,29 +304,52 @@ class Renderer:
         def intersects(a, b):
             return a[0] < b[2] and a[2] > b[0] and a[1] < b[3] and a[3] > b[1]
 
-        slots = []
-        headers = {}
-        for x0, y0, x1, y1 in rects:
-            for col in range(max(0, (x1 - x0) // entry_w)):
-                for row in range(max(0, (y1 - y0 - sc(65)) // row_h)):
-                    slot = (x0 + col * entry_w, y0 + sc(65) + row * row_h)
-                    header = (x0 + col * entry_w, y0)
-                    if intersects(
-                        (slot[0], slot[1], slot[0] + entry_w, slot[1] + row_h), ruler_box
-                    ) or intersects(
-                        (header[0], header[1], header[0] + entry_w, header[1] + sc(50)), ruler_box
-                    ):
-                        continue
-                    slots.append(slot)
-                    headers[slot] = header
+        def pack(width, height):
+            slots, headers = [], {}
+            for x0, y0, x1, y1 in rects:
+                for col in range(max(0, (x1 - x0) // width)):
+                    for row in range(max(0, (y1 - y0 - sc(65)) // height)):
+                        slot = (x0 + col * width, y0 + sc(65) + row * height)
+                        header = (x0 + col * width, y0)
+                        if intersects(
+                            (slot[0], slot[1], slot[0] + width, slot[1] + height), ruler_box
+                        ) or intersects(
+                            (header[0], header[1], header[0] + width, header[1] + sc(50)),
+                            ruler_box,
+                        ):
+                            continue
+                        slots.append(slot)
+                        headers[slot] = header
+            return slots, headers
+
+        slots, headers = pack(entry_w, row_h)
+        compact = len(slots) < len(self.entries)
+        if compact:
+            # Stack the ordinal above its symbol in narrow margins. Keep the same
+            # type sizes and 70px symbol; never resize the cloth or omit entries.
+            ordinal_w = ceil(self.font(sc(50)).getlength(str(len(self.entries))))
+            code_offset = max(sc(70), ordinal_w) + sc(20)
+            entry_w = max(
+                code_offset + ceil(max_code) + sc(10),
+                ceil(self.font(sc(32)).getlength("No. / DMC")),
+            )
+            slots, headers = pack(entry_w, sc(136))
         if len(slots) < len(self.entries):
             raise ResourceError("生产余量无法放下完整图例，须调整独立SKU/版式，不能缩字或漏色")
         for header in sorted({headers[slot] for slot in slots[: len(self.entries)]}):
-            self.text(image, header, "No. / Symbol / DMC", 32)
+            self.text(image, header, "No. / DMC" if compact else "No. / Symbol / DMC", 32)
         for k, ((index, color), (x, y)) in enumerate(zip(self.entries, slots, strict=False)):
-            self.text(image, (x, y + sc(12)), str(k + 1), 50)
-            image.paste(self.tile(index, sc(70), sc(70)), (x + sc(85), y))
-            self.text(image, (x + sc(180), y + sc(5)), color.code, 56)
+            self.text(image, (x, y if compact else y + sc(12)), str(k + 1), 50)
+            image.paste(
+                self.tile(index, sc(70), sc(70)),
+                (x, y + sc(56)) if compact else (x + sc(85), y),
+            )
+            self.text(
+                image,
+                (x + code_offset, y + sc(62)) if compact else (x + sc(180), y + sc(5)),
+                color.code,
+                56,
+            )
         self.custom_text(image, "production")
         return image, raster
 
@@ -383,6 +407,10 @@ class Renderer:
         }
         for key, layer in active.items():
             if key.startswith(kind):
+                # Production has no built-in footer to erase. A disabled custom
+                # footer must neither reserve nor paint over usable legend space.
+                if key == "production_bottom" and not layer.enabled:
+                    continue
                 box = regions[key]
                 if (
                     kind == "production"
