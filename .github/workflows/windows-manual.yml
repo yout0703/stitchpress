@@ -28,7 +28,7 @@ concurrency:
 jobs:
   windows-x64:
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       QT_QPA_PLATFORM: offscreen
       # Windows runners may default redirected Python output to CP1252.
@@ -47,8 +47,8 @@ jobs:
       - run: uv run --all-groups ruff check src tests tools
       - run: uv run --all-groups ruff format --check src tests tools
       - name: Run full Windows test suite
-        timeout-minutes: 15
-        run: uv run --all-groups pytest -q -o faulthandler_timeout=180 --durations=12 --junitxml=reports/local/windows/tests.xml
+        timeout-minutes: 25
+        run: uv run --all-groups pytest -v -o faulthandler_timeout=180 --durations=12 --junitxml=reports/local/windows/tests.xml
       - run: uv run --all-groups python tools/build_desktop.py
       - name: Verify packaged executable and Chinese installation directory
         shell: pwsh
