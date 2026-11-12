@@ -56,6 +56,8 @@ class PreviewBoard(QWidget):
         self.loaded_sha = None
         self.observed_sha = None
         self.attempted_sha = None
+        self.invalid_parameters = False
+        self.loaded_message = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         row = QHBoxLayout()
@@ -119,8 +121,15 @@ class PreviewBoard(QWidget):
         except Exception as exc:
             self.status.setText("设置尚未完整：" + str(exc))
             self.observed_sha = None
+            self.invalid_parameters = True
             return
-        if key == self.loaded_sha or key == self.attempted_sha:
+        if key == self.loaded_sha:
+            if self.invalid_parameters:
+                self.status.setText(self.loaded_message)
+                self.invalid_parameters = False
+            return
+        self.invalid_parameters = False
+        if key == self.attempted_sha:
             return
         if key != self.observed_sha:
             self.observed_sha = key
@@ -214,6 +223,7 @@ class PreviewBoard(QWidget):
 
     def present(self, result):
         row = max(0, self.list.currentRow())
+        first = not self.pages
         self.pages = result["pages"]
         self.loaded_sha = result["fingerprint"]
         self.list.blockSignals(True)
@@ -232,8 +242,13 @@ class PreviewBoard(QWidget):
             f"7 张详情 · 5 张方图 · {12 - errors}/12 可预览"
             + (" · 点击未完成页查看原因" if errors else " · 草稿效果")
         )
+        self.loaded_message = self.status.text()
+        selected = min(row, len(self.pages) - 1)
+        self.list.setCurrentRow(selected)
         self.list.blockSignals(False)
-        self.list.setCurrentRow(min(row, len(self.pages) - 1))
+        self.select(selected)
+        if first:
+            self.list.currentRowChanged.emit(selected)
         self.ready.emit(result)
 
     def select(self, row):

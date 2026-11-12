@@ -220,3 +220,34 @@ def test_preview_debounce_waits_for_valid_stable_parameters(qtbot, monkeypatch):
     board.snapshot = invalid
     board.check_stale()
     assert len(calls) == 1 and "缩放无效" in board.status.text()
+
+
+def test_auto_refresh_preserves_inspector_and_invalid_restore_clears_error(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMainWindow
+
+    from stitchpress.app.commerce_ui import CommerceDialog
+    from stitchpress.core.commerce import TARGETS
+
+    owner = QMainWindow()
+    owner.draft = source_project()
+    qtbot.addWidget(owner)
+    editor = CommerceDialog(owner)
+    qtbot.addWidget(editor)
+    board = editor.board
+    result = dict(
+        fingerprint=fingerprint(editor.snapshot()),
+        pages=[dict(target=t, error="测试页") for t in TARGETS],
+    )
+    board.present(result)
+    editor.mode.setCurrentIndex(4)
+    board.present(result)
+    assert editor.mode.currentIndex() == 4  # Completing a render is not user navigation.
+    board.list.setCurrentRow(1)
+    assert editor.mode.currentIndex() == 1
+    monkeypatch.setattr(board, "isVisible", lambda: True)
+    editor.scenes[0]["fields"]["scale"].setText("")
+    board.check_stale()
+    assert board.invalid_parameters
+    editor.scenes[0]["fields"]["scale"].setText("1")
+    board.check_stale()
+    assert not board.invalid_parameters and board.status.text() == board.loaded_message
