@@ -77,7 +77,8 @@ def test_thread_text_commerce_pages_save_independent_state(qtbot, monkeypatch):
     w.commerce_panel.apply()
     saved = w.draft.entities["commerce"]
     assert saved["detail_width"] == 1500 and saved["detail_dpi"] == 200
-    assert saved["scenes"][1]["scene"] == 8 and saved["scenes"][0]["scene"] != 8
+    assert saved["scenes"][1]["scene"] == 8
+    assert saved["scenes"][0] == d.saved.scenes[0]
     assert saved["art_source"] == "original"
     assert not errors and not w.reference_pending()
     w.dirty = False

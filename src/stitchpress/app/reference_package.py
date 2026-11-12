@@ -59,6 +59,10 @@ def post_fingerprint(project):
 
     record, _ = settings_document(project, "resources")
     record.pop("origin_project_id")
+    from .commerce_templates import template_font_sha
+
+    if font_sha := template_font_sha(project):
+        record["commerce_font_sha"] = font_sha
     return digest(record)
 
 

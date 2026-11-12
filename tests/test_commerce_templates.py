@@ -183,3 +183,15 @@ def test_template_font_does_not_inherit_unrelated_production_font(tmp_path):
     p.entities["commerce"] = apply_template(CommerceSettings(), templates()[0]).to_dict()
     result = render_sheet(p, tmp_path / "separate-font")
     assert all("error" not in page for page in result["pages"])
+
+
+def test_bundled_font_revision_invalidates_preview_and_export_review(monkeypatch):
+    from stitchpress.app.reference_package import post_fingerprint
+    from stitchpress.core import commerce_layout
+
+    p = source_project()
+    p.entities["commerce"] = apply_template(CommerceSettings(), templates()[0]).to_dict()
+    before = (fingerprint(p), post_fingerprint(p))
+    monkeypatch.setattr(commerce_layout, "commerce_font", lambda: b"new font revision")
+    assert fingerprint(p) != before[0]
+    assert post_fingerprint(p) != before[1]

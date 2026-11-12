@@ -33,10 +33,22 @@ def apply_template(settings, template, *, keep_scenes=True, reset_text=False):
     return CommerceSettings(**data)
 
 
+def template_font_sha(project):
+    settings = CommerceSettings(**project.entities.get("commerce", {}))
+    if settings.font_asset:
+        return sha256(project.assets[settings.font_asset])
+    if settings.template:
+        from stitchpress.core.commerce_layout import commerce_font
+
+        return sha256(commerce_font())
+    return None
+
+
 def fingerprint(project):
     return digest(
         dict(
             project=project.project_id,
+            template_font_sha=template_font_sha(project),
             entities=project.entities,
             assets={k: sha256(v) for k, v in project.assets.items()},
         )
