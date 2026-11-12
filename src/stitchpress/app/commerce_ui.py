@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -64,13 +63,19 @@ class CommerceDialog(QDialog):
         self.undo_button.setEnabled(False)
         self.undo_button.clicked.connect(self.undo_template)
         toolbar.addWidget(self.undo_button)
-        more = QPushButton("我的预设")
-        menu = QMenu(more)
-        menu.addAction("保存为个人预设…", self.save_personal)
-        menu.addAction("导入个人预设…", self.import_personal)
-        menu.addAction("导出当前预设…", self.export_personal)
-        menu.addAction("选择商品字体…", self.import_font)
-        more.setMenu(menu)
+        from .navigation import menu_button
+
+        more = menu_button(
+            "我的预设",
+            [
+                ("保存为个人预设…", self.save_personal),
+                ("导入个人预设…", self.import_personal),
+                ("导出当前预设…", self.export_personal),
+                ("选择商品字体…", self.import_font),
+            ],
+        )
+        if hasattr(owner, "mark_reference_pending"):
+            more.menu().triggered.connect(owner.mark_reference_pending)
         toolbar.addWidget(more)
         layout.addLayout(toolbar)
         note = QLabel("先选模板，再核对整套图片。未应用的设置只用于本页预览，不影响作品导出。")
