@@ -1,6 +1,7 @@
 """Native workspace composition, kept separate from the project coordinator."""
 
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -67,8 +68,35 @@ def build_workspace(w, canvas_type):
     w.setCentralWidget(root)
 
     header, hl = frame("documentHeader", horizontal=True, margins=(20, 8, 20, 8))
-    hl.addWidget(label("StitchPress", "brand"))
-    hl.addWidget(label("绣印工坊", "muted"))
+    from .branding import brand_asset
+
+    hl.setSpacing(16)
+    brand = QWidget()
+    brand.setFixedWidth(160)
+    bl = QHBoxLayout(brand)
+    bl.setContentsMargins(0, 0, 0, 0)
+    bl.setSpacing(10)
+    mark = QLabel()
+    mark.setObjectName("brandMark")
+    mark.setFixedSize(40, 40)
+    mark_image = QPixmap(str(brand_asset("stitchpress-mark.png"))).scaled(
+        80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+    )
+    mark_image.setDevicePixelRatio(2)
+    mark.setPixmap(mark_image)
+    mark.setScaledContents(True)
+    mark.setAccessibleName("StitchPress 交织标记")
+    bl.addWidget(mark)
+    wordmark = QVBoxLayout()
+    wordmark.setSpacing(1)
+    wordmark.addWidget(label("StitchPress", "brand"))
+    wordmark.addWidget(label("绣印工坊", "brandSubtitle"))
+    bl.addLayout(wordmark)
+    hl.addWidget(brand)
+    divider = QFrame()
+    divider.setObjectName("brandDivider")
+    divider.setFixedSize(1, 28)
+    hl.addWidget(divider)
     w.document_title = label("", "document")
     w.document_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
     hl.addWidget(w.document_title, 1)

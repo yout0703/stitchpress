@@ -18,6 +18,11 @@ def main():
     host = "macos" if sys.platform == "darwin" else "windows"
     output = ROOT / "dist" / (host if args.backend == "pyinstaller" else "nuitka-" + host)
     output.mkdir(parents=True, exist_ok=True)
+    app_icon = (
+        ROOT
+        / "src/stitchpress/resources/brand"
+        / ("stitchpress.icns" if sys.platform == "darwin" else "stitchpress.ico")
+    )
     command = [
         sys.executable,
         "-m",
@@ -37,6 +42,7 @@ def main():
             "--macos-create-app-bundle",
             "--macos-app-name=StitchPress",
             "--macos-app-version=0.1.0",
+            f"--macos-app-icon={ROOT / 'src/stitchpress/resources/brand/stitchpress.icns'}",
         ]
     else:
         command += [
@@ -44,6 +50,7 @@ def main():
             "--product-name=StitchPress",
             "--file-version=0.1.0.0",
             "--product-version=0.1.0.0",
+            f"--windows-icon-from-ico={ROOT / 'src/stitchpress/resources/brand/stitchpress.ico'}",
         ]
     command += ["tools/StitchPress.py"]
     if args.backend == "pyinstaller":
@@ -55,6 +62,7 @@ def main():
             "--onedir",
             "--windowed",
             "--name=StitchPress",
+            f"--icon={app_icon}",
             f"--paths={ROOT / 'src'}",
             f"--add-data={ROOT / 'src' / 'stitchpress' / 'resources'}:stitchpress/resources",
             "--collect-submodules=stitchpress",

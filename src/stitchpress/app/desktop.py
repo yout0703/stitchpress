@@ -374,6 +374,9 @@ class Workbench(
     def __init__(self):
         super().__init__()
         self.setWindowTitle("StitchPress · 绣印工坊 · 开发试验版")
+        from .branding import application_icon
+
+        self.setWindowIcon(application_icon())
         self.resize(1440, 1024)
         self.setMinimumSize(1100, 720)
         chosen_theme = load_settings().get("appearance", {}).get("theme", "dark")
@@ -477,7 +480,9 @@ class Workbench(
 
     def update_document_state(self):
         metadata = self.draft.entities["metadata"]
-        title = f"{metadata['title']} / {metadata['code']}"
+        title = metadata["title"]
+        if title != metadata["code"]:
+            title += f" / {metadata['code']}"
         self.document_title.setText(title)
         self.document_title.setToolTip(title)
         state = "有未保存修改" if self.dirty else "已保存" if self.project_path else "示例 · 未保存"
@@ -1617,6 +1622,9 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("StitchPress")
     app.setOrganizationName("StitchPress")
+    from .branding import application_icon
+
+    app.setWindowIcon(application_icon())
     window = Workbench()
     window.show()
     QTimer.singleShot(0, window.canvas.fit)

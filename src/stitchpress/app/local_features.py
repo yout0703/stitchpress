@@ -163,6 +163,7 @@ class SpecificationDialog(QDialog):
         self.custom_w, self.custom_h = QLineEdit(), QLineEdit()
         self.landscape = QCheckBox("横向（交换宽高）")
         self.scale = QLineEdit()
+        self.scale.setMaximumWidth(140)
         self.overlap = QSpinBox()
         self.overlap.setRange(0, 30)
         self.style = QComboBox()
@@ -176,7 +177,9 @@ class SpecificationDialog(QDialog):
         self.reading_dpi.setRange(0, 1200)
         self.reading_dpi.setSpecialValueText("沿用生产DPI")
         self.reading_cell = QLineEdit()
-        self.reading_cell.setPlaceholderText("留空沿用格距 × 阅读倍率")
+        self.reading_cell.setPlaceholderText("自动：格距 × 倍率")
+        self.reading_cell.setMaximumWidth(200)
+        self.reading_cell.setToolTip("留空沿用实际格距 × 阅读倍率；填写时为 0.5–10 mm")
         self.reading_margins = [QLineEdit() for _ in range(4)]
 
         def section(title):

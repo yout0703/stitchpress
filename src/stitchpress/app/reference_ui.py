@@ -194,7 +194,8 @@ class EditorPanel(QWidget):
             form.setVerticalSpacing(14)
             form.setHorizontalSpacing(22)
         for field in self.editor.findChildren(QLineEdit):
-            field.setMaximumWidth(min(field.maximumWidth(), 420))
+            if not isinstance(field.parentWidget(), (QSpinBox, QComboBox)):
+                field.setMaximumWidth(min(field.maximumWidth(), 420))
         for field in self.editor.findChildren(QComboBox):
             field.setMaximumWidth(min(field.maximumWidth(), 300))
         for field in self.editor.findChildren(QSpinBox):

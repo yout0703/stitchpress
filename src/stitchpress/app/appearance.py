@@ -5,9 +5,23 @@ from pathlib import Path
 from string import Template
 
 import qtawesome as qta
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QEvent, QObject, QSize
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QAbstractButton, QApplication
+from PySide6.QtWidgets import QAbstractButton, QAbstractSpinBox, QApplication, QLineEdit
+
+
+class InputInsets(QObject):
+    """Qt spin editors need explicit text margins in addition to the outer box model."""
+
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.Polish
+            and isinstance(watched, QLineEdit)
+            and isinstance(watched.parentWidget(), QAbstractSpinBox)
+        ):
+            watched.setTextMargins(10, 0, 4, 0)
+        return False
+
 
 THEMES = {
     "dark": {
@@ -59,6 +73,11 @@ def bind_icon(widget, name):
 
 
 def apply_appearance(app: QApplication, root, theme):
+    if not hasattr(app, "_input_insets"):
+        app._input_insets = InputInsets(app)
+        app.installEventFilter(app._input_insets)
+    for spin in root.findChildren(QAbstractSpinBox):
+        spin.lineEdit().setTextMargins(10, 0, 4, 0)
     icons = Path(__file__).parents[1] / "resources" / "icons"
     t = {
         **THEMES[theme],
@@ -99,8 +118,11 @@ def apply_appearance(app: QApplication, root, theme):
         QFrame#selectionDock { border: 1px solid $line; border-radius: 10px; }
         QFrame#pageCard { border: 1px solid $line; border-radius: 10px; }
         QLabel { background: transparent; border: none; }
-        QLabel[role="brand"] { font-size: 19px; font-weight: 650; }
-        QLabel[role="document"] { font-size: 15px; font-weight: 600; }
+        QLabel[role="brand"] { font-size: 18px; font-weight: 600; }
+        QLabel[role="brandSubtitle"] { font-size: 10px; color: $muted; }
+        QLabel#brandMark { background: #f1f8f5; border-radius: 10px; }
+        QFrame#brandDivider { background: $line; border: none; }
+        QLabel[role="document"] { font-size: 14px; font-weight: 500; }
         QLabel[role="heading"] { font-size: 19px; font-weight: 600; }
         QLabel[role="pageTitle"] { font-size: 24px; font-weight: 650; }
         QLabel[role="muted"] { color: $muted; }
@@ -121,23 +143,37 @@ def apply_appearance(app: QApplication, root, theme):
         QPushButton:disabled, QToolButton:disabled { color: $disabled;
             background: $raised; border-color: $line; }
         QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus,
-        QSpinBox:focus, QTextEdit:focus, QTableWidget:focus { border: 1px solid $accent; }
-        QLineEdit, QComboBox, QSpinBox, QTextEdit { background: $raised;
-            color: $text; border: 1px solid $line; border-radius: 5px;
-            padding: 7px; min-height: 19px; }
+        QAbstractSpinBox:focus, QTextEdit:focus, QTableWidget:focus { border: 1px solid $accent; }
+        QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit { background: $raised;
+            color: $text; border: 1px solid $line; border-radius: 7px;
+            padding: 8px 10px; min-height: 18px; }
         QLineEdit, QTextEdit { placeholder-text-color: $muted; }
-        QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { color: $disabled; }
-        QComboBox { padding-right: 22px; }
-        QComboBox::drop-down { width: 21px; border: none; }
+        QLineEdit:hover, QComboBox:hover, QAbstractSpinBox:hover { border-color: $muted; }
+        QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus { border-color: $accent; }
+        QLineEdit:disabled, QComboBox:disabled, QAbstractSpinBox:disabled {
+            color: $disabled; background: $bg; border-color: $line; }
+        QComboBox { padding-right: 30px; }
+        QComboBox::drop-down { width: 28px; border: none; }
         QComboBox::down-arrow { image: url("$chevron_down"); width: 13px; height: 13px; }
         QComboBox QAbstractItemView { background: $panel; color: $text;
             selection-background-color: $selected; selection-color: $text;
             border: 1px solid $line; }
-        QSpinBox::up-button, QSpinBox::down-button { width: 18px;
+        QAbstractSpinBox { padding: 6px 30px 6px 10px; }
+        QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
+            subcontrol-origin: border; width: 24px; right: 1px;
             border: none; border-left: 1px solid $line; background: transparent; }
-        QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: $hover; }
-        QSpinBox::up-arrow { image: url("$chevron_up"); width: 11px; height: 11px; }
-        QSpinBox::down-arrow { image: url("$chevron_down"); width: 11px; height: 11px; }
+        QAbstractSpinBox::up-button { subcontrol-position: top right; top: 1px;
+            border-top-right-radius: 6px; }
+        QAbstractSpinBox::down-button { subcontrol-position: bottom right; bottom: 1px;
+            border-bottom-right-radius: 6px; }
+        QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {
+            background: $hover; }
+        QAbstractSpinBox::up-arrow { image: url("$chevron_up"); width: 11px; height: 11px; }
+        QAbstractSpinBox::down-arrow { image: url("$chevron_down"); width: 11px; height: 11px; }
+        QLineEdit#qt_spinbox_lineedit, QLineEdit#qt_spinbox_lineedit:focus,
+        QComboBox QLineEdit, QComboBox QLineEdit:focus {
+            background: transparent; border: none; border-radius: 0;
+            padding: 0; margin: 0; min-height: 0; }
         QCheckBox { spacing: 8px; padding: 5px 0; }
         QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;
             border: 1px solid $muted; background: $raised; }
