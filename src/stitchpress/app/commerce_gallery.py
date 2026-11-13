@@ -84,7 +84,7 @@ def show_gallery(owner, result):
     form.addRow("应用到", slot)
     layout.addLayout(form)
     tabs, lists = QTabWidget(), {}
-    for kind, title in (("scene", "9 个场景"), ("frame", "8 种相框")):
+    for kind, title in (("scene", f"{len(SCENES)} 个场景"), ("frame", f"{len(FRAMES)} 种相框")):
         view = QListWidget()
         view.setViewMode(QListWidget.ViewMode.IconMode)
         view.setIconSize(QSize(240, 80))
