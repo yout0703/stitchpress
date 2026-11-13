@@ -99,8 +99,10 @@ def values_for(design, fabric, *, code="", title="", page="", pages="", scale="1
         "height": design.height,
         "colors": sum(n > 0 for n in design.counts),
         "stitches": sum(design.counts),
-        "width_cm": layout.width_cm,
-        "height_cm": layout.height_cm,
+        # Text is presentation, not a geometry input. CT-derived dimensions can
+        # have 28 recurring decimal digits and overflow an otherwise valid page.
+        "width_cm": f"{decimal(layout.width_cm):.4f}".rstrip("0").rstrip("."),
+        "height_cm": f"{decimal(layout.height_cm):.4f}".rstrip("0").rstrip("."),
         "ct": fabric.nominal_ct,
         "page": page,
         "pages": pages,

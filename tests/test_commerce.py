@@ -23,6 +23,25 @@ def project_with_source():
     return project
 
 
+def test_classic_spec_accepts_exact_ct_dimensions_without_decimal_overflow():
+    from decimal import Decimal
+
+    project = demo_project(13, 18, 3)
+    step = str(Decimal("2.54") / 14)
+    project.entities["fabric"].update(sx=step, sy=step, nominal_ct="14")
+    context = commerce_context(project)
+    renderer = CommerceRenderer(context, CommerceSettings(), project.assets, demo=True)
+    try:
+        assert renderer.fields["width_cm"] == "2.3586"
+        assert renderer.fields["height_cm"] == "3.2657"
+        for target in ("detail-spec", "square-2"):
+            image, _ = renderer.render(target)
+            image.close()
+        assert project.entities["fabric"]["sx"] == step
+    finally:
+        renderer.subject.close()
+
+
 def test_twelve_commerce_outputs_keep_pixel_sizes_and_only_scene_dependencies_change(tmp_path):
     project = project_with_source()
     before = digest(project.entities)
