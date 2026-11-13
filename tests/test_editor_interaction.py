@@ -254,6 +254,85 @@ def test_background_save_keeps_edits_made_while_compressing(qtbot, tmp_path, mon
     w.close()
 
 
+def test_large_save_as_is_background_and_preserves_later_edits(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr("stitchpress.app.background_save.settings_dir", lambda: tmp_path)
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.draft.assets["sources/large.bin"] = b"a" * (9 * 1024**2)
+    original_id = w.draft.project_id
+    target = tmp_path / "大型作品副本.stitchpress"
+    monkeypatch.setattr(
+        "stitchpress.app.desktop.QFileDialog.getSaveFileName", lambda *args: (str(target), "")
+    )
+
+    def no_ui_compression(*args, **kwargs):
+        raise AssertionError("主界面不应编码大型作品")
+
+    monkeypatch.setattr(Project, "encode", no_ui_compression)
+    w.title_edit.setText("另存时快照")
+    assert w.save_as()
+    assert w._save_process is not None
+    assert not target.exists()
+    assert w.draft.project_id == original_id
+    w.title_edit.setText("保存期间继续编辑")
+    w.show_page(0)
+    qtbot.waitUntil(lambda: w._save_process is None, timeout=30000)
+    saved = Project.decode(target.read_bytes())
+    assert saved.entities["metadata"]["title"] == "另存时快照"
+    assert saved.project_id != original_id
+    assert w.draft.project_id == saved.project_id
+    assert w.title_edit.text() == "保存期间继续编辑"
+    assert w.dirty
+    assert w.project_path == target
+    assert not list((tmp_path / "save-work").glob("*/snapshot.json"))
+    w.dirty = False
+    w.title_edit.setText(saved.entities["metadata"]["title"])
+    w.close()
+
+
+def test_background_copy_does_not_overwrite_external_file(qtbot, tmp_path, monkeypatch):
+    from stitchpress.app.background_save import request_save
+
+    monkeypatch.setattr("stitchpress.app.background_save.settings_dir", lambda: tmp_path)
+    w = Workbench()
+    qtbot.addWidget(w)
+    errors = []
+    monkeypatch.setattr(w, "error", errors.append)
+    original_id = w.draft.project_id
+    target = tmp_path / "外部文件.stitchpress"
+    assert request_save(w, copy_target=target)
+    target.write_bytes(b"external file")
+    qtbot.waitUntil(lambda: w._save_process is None, timeout=30000)
+    assert target.read_bytes() == b"external file"
+    assert errors and "外部修改" in str(errors[0])
+    assert w.draft.project_id == original_id and w.project_path is None
+    assert w._save_cleanup is None
+    w.close()
+
+
+def test_stopping_background_copy_keeps_source_and_releases_destination(
+    qtbot, tmp_path, monkeypatch
+):
+    from stitchpress.app.background_save import request_save
+    from stitchpress.app.store import Coordinator
+
+    monkeypatch.setattr("stitchpress.app.background_save.settings_dir", lambda: tmp_path)
+    w = Workbench()
+    qtbot.addWidget(w)
+    original_id = w.draft.project_id
+    target = tmp_path / "取消的另存.stitchpress"
+    assert request_save(w, copy_target=target)
+    w.stop_save_worker()
+    assert w._save_process is None and not target.exists()
+    assert w.draft.project_id == original_id and w.project_path is None
+    replacement = Coordinator(target, w.draft)
+    replacement.close()
+    qtbot.waitUntil(
+        lambda: not list((tmp_path / "save-work").glob("*/snapshot.json")), timeout=10000
+    )
+    w.close()
+
+
 def test_prepared_save_cannot_bypass_content_or_external_change_checks(tmp_path):
     import pytest
 

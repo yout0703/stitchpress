@@ -89,7 +89,8 @@ class FabricPreview(QWidget):
         self.detail.setText(
             f"左 {margins[0]:.2f} · 右 {margins[2]:.2f} · "
             f"上 {margins[1]:.2f} · 下 {margins[3]:.2f} cm\n"
-            f"{width} × {height} 格 · {fabric.dpi} DPI · 实际格距 {fabric.sx} × {fabric.sy} cm"
+            f"{width} × {height} 格 · {fabric.dpi} DPI · "
+            f"实际格距 {Decimal(fabric.sx):.4f} × {Decimal(fabric.sy):.4f} cm"
         )
 
     def invalid(self, message):

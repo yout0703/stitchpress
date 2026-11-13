@@ -1069,6 +1069,9 @@ class Workbench(
         stop_save(self)
 
     def save_as(self):
+        if self._save_process is not None:
+            self.statusBar().showMessage("后台保存仍在运行，请完成后再另存")
+            return False
         if self.reference_pending():
             self.error("有尚未应用的页面参数，请先保存 / 应用对应页面，或取消恢复")
             return False
@@ -1085,6 +1088,10 @@ class Workbench(
                 target = target.with_name(target.name + ".stitchpress")
             if target.exists():
                 raise StitchPressError("另存不能覆盖已有作品，请选择新文件名")
+            if sum(map(len, self.draft.assets.values())) >= 8 * 1024**2:
+                from .background_save import request_save
+
+                return request_save(self, copy_target=target)
             draft = copy.deepcopy(self.draft)
             draft.project_id = uuid4().hex
             coordinator = Coordinator(target, draft)

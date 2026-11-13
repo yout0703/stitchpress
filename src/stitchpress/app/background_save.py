@@ -5,7 +5,6 @@ import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
-from zipfile import ZIP_STORED
 
 from PySide6.QtCore import QProcess
 
@@ -14,14 +13,51 @@ from stitchpress.platform.files import atomic_write
 from stitchpress.platform.launch import worker_arguments, worker_program
 from stitchpress.platform.settings import settings_dir
 
-from .store import PROJECT_SCHEMA
+from .store import PROJECT_SCHEMA, Coordinator
 
 
-def request_save(owner):
+def write_snapshot(project, folder):
+    """Stage immutable bytes without image validation or compression on the UI thread."""
+    resources = folder / "resources"
+    resources.mkdir()
+    names = []
+    for index, (name, data) in enumerate(project.assets.items()):
+        filename = f"{index}.bin"
+        (resources / filename).write_bytes(data)
+        names.append((name, filename))
+    snapshot = folder / "snapshot.json"
+    snapshot.write_bytes(
+        canonical_bytes(
+            dict(
+                project_id=project.project_id,
+                commit_seq=project.commit_seq,
+                entities=project.entities,
+                events=project.events,
+                source_schema=project.source_schema,
+                asset_files=names,
+            )
+        )
+    )
+    return snapshot
+
+
+def read_snapshot(path):
+    from .store import Project
+
+    document = json.loads(path.read_bytes())
+    assets = {}
+    for index, (name, filename) in enumerate(document.pop("asset_files")):
+        if filename != f"{index}.bin" or name in assets:
+            raise ValueError("后台保存资源清单无效")
+        assets[name] = (path.parent / "resources" / filename).read_bytes()
+    return Project(**document, assets=assets)
+
+
+def request_save(owner, *, copy_target=None):
     if owner._save_process is not None:
         owner.statusBar().showMessage("正在保存上一份快照；当前新修改会保留，完成后可再次保存")
         return False
-    if (
+    if copy_target is None and (
         owner.coordinator is None
         or owner.coordinator.project.source_schema < PROJECT_SCHEMA
         or sum(map(len, owner.draft.assets.values())) < 8 * 1024**2
@@ -33,14 +69,22 @@ def request_save(owner):
     if not owner.apply_fields():
         return False
     folder = None
+    copy_coordinator = None
     try:
-        captured = copy.deepcopy(owner.draft)
-        baseline = owner.baseline
-        coordinator = owner.coordinator
+        original_coordinator = owner.coordinator
+        original_id = owner.draft.project_id
+        original_snapshot = copy.deepcopy(owner.draft)
+        captured = original_snapshot
+        if copy_target is not None:
+            captured = captured.upgraded_copy()
+            captured.project_id = uuid4().hex
+            copy_coordinator = Coordinator(copy_target, captured)
+        baseline = captured if copy_target is not None else owner.baseline
+        coordinator = copy_coordinator or owner.coordinator
         changes = {k: v for k, v in captured.entities.items() if v != baseline.entities.get(k)}
         for key in baseline.entities.keys() - captured.entities.keys():
             changes[key] = None
-        if not changes and captured.assets == baseline.assets:
+        if copy_target is None and not changes and captured.assets == baseline.assets:
             owner.dirty = False
             owner.update_document_state()
             owner.statusBar().showMessage("作品已经保存，没有新的修改")
@@ -50,25 +94,25 @@ def request_save(owner):
         prepared.commit_seq = baseline.commit_seq + 1
         folder = settings_dir() / "save-work" / uuid4().hex
         folder.mkdir(parents=True)
-        snapshot = folder / "input.stitchpress"
-        atomic_write(snapshot, prepared.encode(compression=ZIP_STORED))
+        snapshot = write_snapshot(prepared, folder)
         output = folder / "result.json"
         job = folder / "job.json"
         atomic_write(
             job,
             canonical_bytes(
-                dict(operation="encode-project", project=str(snapshot), output=str(output))
+                dict(operation="encode-project", snapshot=str(snapshot), output=str(output))
             ),
         )
         process = QProcess(owner)
         owner._save_process = process
+        owner._save_cleanup = copy_coordinator.close if copy_coordinator else None
         process.setProgram(worker_program())
         process.setArguments(worker_arguments("worker", [str(job)]))
 
         def finished(code, *_):
             active = owner._save_process is process
             try:
-                if not active or owner.coordinator is not coordinator:
+                if not active or owner.coordinator is not original_coordinator:
                     return
                 owner._save_process = None
                 report = json.loads(output.read_bytes())
@@ -82,9 +126,25 @@ def request_save(owner):
                     prepared_payload=Path(report["result"]["candidate"]).read_bytes(),
                 )
                 newer = (
-                    digest(owner.draft.entities) != digest(captured.entities)
-                    or owner.draft.assets != captured.assets
+                    digest(owner.draft.entities) != digest(original_snapshot.entities)
+                    or owner.draft.assets != original_snapshot.assets
+                    or owner.has_pending_form()
+                    or owner.reference_pending()
                 )
+                if copy_target is not None:
+                    if original_coordinator:
+                        original_coordinator.close()
+                    owner.coordinator, owner.project_path = coordinator, copy_target
+                    owner._save_cleanup = None  # The active document now owns this lock.
+                    for panel in getattr(owner, "reference_panels", ()):
+                        if panel.project_id == original_id:
+                            panel.project_id = result.project_id
+                    if owner.reference_project == original_id:
+                        owner.reference_project = result.project_id
+                    owner.draft.project_id = result.project_id
+                    owner.draft.source_schema = result.source_schema
+                    for key in captured.entities.keys() - original_snapshot.entities.keys():
+                        owner.draft.entities.setdefault(key, copy.deepcopy(captured.entities[key]))
                 owner.baseline = copy.deepcopy(result)
                 if newer:
                     owner.draft.commit_seq = result.commit_seq
@@ -102,6 +162,9 @@ def request_save(owner):
             except Exception as exc:
                 owner.error(exc)
             finally:
+                if active and owner._save_cleanup:
+                    owner._save_cleanup()
+                    owner._save_cleanup = None
                 if active:
                     owner.update_document_state()
                 shutil.rmtree(folder, ignore_errors=True)
@@ -116,6 +179,8 @@ def request_save(owner):
         process.start()
         return True
     except Exception as exc:
+        if copy_coordinator:
+            copy_coordinator.close()
         if folder:
             shutil.rmtree(folder, ignore_errors=True)
         owner.error(exc)
@@ -127,3 +192,7 @@ def stop_save(owner):
     if process is not None:
         owner._save_process = None
         process.kill()
+        cleanup = getattr(owner, "_save_cleanup", None)
+        if cleanup:
+            cleanup()
+            owner._save_cleanup = None

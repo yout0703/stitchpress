@@ -14,7 +14,12 @@ def run(job_path: Path) -> int:
         if job["operation"] == "encode-project":
             from .store import Project
 
-            project = Project.decode(Path(job["project"]).read_bytes())
+            if "snapshot" in job:
+                from .background_save import read_snapshot
+
+                project = read_snapshot(Path(job["snapshot"]))
+            else:
+                project = Project.decode(Path(job["project"]).read_bytes())
             candidate = output.parent / "prepared.stitchpress"
             atomic_write(candidate, project.encode())
             result = dict(candidate=str(candidate))
