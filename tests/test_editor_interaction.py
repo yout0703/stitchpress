@@ -467,5 +467,20 @@ def test_history_restores_reference_state_and_discards_pending_forms(qtbot, tmp_
     assert not w.reference_pending()
     assert w.dirty and w.coordinator is writer
     assert w.baseline.commit_seq == 2 and path.read_bytes() == original
+    monkeypatch.setattr(
+        "stitchpress.app.desktop.QFileDialog.getOpenFileName", lambda *args: (str(path), "")
+    )
+    w.open_project()
+    assert not w.dirty and w.coordinator is writer
+    assert digest(w.draft.entities["post"]) == digest(changed["post"])
+    assert w.thread_table.item(0, 0).text() == "14"
+    assert w.draft.commit_seq == 2 and path.read_bytes() == original
+    # Reusing the writer must keep its exclusive lock alive.
+    import pytest
+
+    from stitchpress.core.errors import ConflictError
+
+    with pytest.raises(ConflictError):
+        Coordinator(path)
     w.dirty = False
     w.close()

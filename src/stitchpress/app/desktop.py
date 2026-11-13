@@ -959,7 +959,7 @@ class Workbench(
         ):
             raise StitchPressError("作品名称/客户号字段损坏")
         self.stop_save_worker()
-        if self.coordinator:
+        if self.coordinator and self.coordinator is not coordinator:
             self.coordinator.close()
         if hasattr(self, "recovery"):
             self.stop_recovery_worker()
@@ -1013,6 +1013,9 @@ class Workbench(
         coordinator = None
         try:
             if self.project_path and Path(path).resolve() == self.project_path.resolve():
+                # The user accepted discarding the draft. Restore the committed state
+                # without trying to acquire a second lock on the already open file.
+                self.set_project(self.coordinator.project, self.project_path, self.coordinator)
                 return
             coordinator = Coordinator(Path(path))
             self.set_project(coordinator.project, Path(path), coordinator)
