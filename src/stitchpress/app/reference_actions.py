@@ -118,10 +118,13 @@ def import_symbol_folder(project, folder):
         raise StitchPressError("请选择含1–512个TIF/PNG/BMP图块的文件夹")
     symbols, originals, receipts = [], {}, []
     for path in paths:
-        raw = path.read_bytes()
-        normalized, checks = normalize_symbol_image(raw, current.icc)
-        identity = int(path.stem) if re.fullmatch(r"0|[1-9]\d*", path.stem) else path.stem
-        symbol = parse_symbol(normalized, identity, path.name)
+        try:
+            raw = path.read_bytes()
+            normalized, checks = normalize_symbol_image(raw, current.icc)
+            identity = int(path.stem) if re.fullmatch(r"0|[1-9]\d*", path.stem) else path.stem
+            symbol = parse_symbol(normalized, identity, path.name)
+        except (OSError, StitchPressError) as exc:
+            raise StitchPressError(f"符号文件“{path.name}”导入失败：{exc}") from exc
         symbols.append(symbol)
         asset = f"resources/symbol-originals/{sha256(raw)}{path.suffix.lower()}"
         originals[asset] = raw

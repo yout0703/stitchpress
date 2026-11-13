@@ -1,5 +1,6 @@
 import io
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -83,10 +84,21 @@ class SymbolLibrary:
         return {s.key: s for s in self.symbols}
 
 
+@contextmanager
+def _symbol_image(data):
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            yield image
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ResourceError(
+            "符号图片损坏或无法读取，请重新导出有效的单帧 TIF / PNG / BMP。"
+        ) from exc
+
+
 def parse_symbol(data: bytes, external_id: int | str, filename: str) -> Symbol:
     if len(data) > 8 * 1024 * 1024:
         raise ResourceError("符号原件超过8MiB试验限制")
-    with Image.open(io.BytesIO(data)) as source:
+    with _symbol_image(data) as source:
         if getattr(source, "n_frames", 1) != 1 or source.width * source.height > 1_000_000:
             raise ResourceError("符号必须为单页，且不能超过100万像素")
         source.load()
@@ -115,7 +127,7 @@ def normalize_symbol_image(data: bytes, target_icc: bytes | None) -> tuple[bytes
     """Normalize explicitly imported glyphs; retain source separately at the app boundary."""
     if len(data) > 8 * 1024 * 1024:
         raise ResourceError("符号原件超过8MiB限制")
-    with Image.open(io.BytesIO(data)) as source:
+    with _symbol_image(data) as source:
         if source.format not in {"TIFF", "PNG", "BMP"}:
             raise ResourceError("符号导入仅支持TIF/PNG/BMP")
         if getattr(source, "n_frames", 1) != 1 or source.width * source.height > 1_000_000:

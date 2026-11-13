@@ -42,6 +42,17 @@ def test_save_locates_unapplied_page_without_touching_file(qtbot, tmp_path, monk
     w.close()
 
 
+def test_corrupt_symbol_folder_names_file_and_preserves_project(tmp_path):
+    from stitchpress.core.identity import digest
+
+    project = demo_project()
+    before = digest(project.entities), dict(project.assets)
+    (tmp_path / "999.tif").write_bytes(b"broken-image-for-QA")
+    with pytest.raises(StitchPressError, match="999.tif.*符号图片损坏"):
+        import_symbol_folder(project, tmp_path)
+    assert (digest(project.entities), project.assets) == before
+
+
 def test_five_workspaces_apply_cancel_conflict_and_project_switch(qtbot, monkeypatch):
     w = Workbench()
     qtbot.addWidget(w)
