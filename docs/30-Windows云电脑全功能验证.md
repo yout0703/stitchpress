@@ -97,3 +97,5 @@ Windows CI 43406797232 在 25 分钟限时中断；日志持续通过至 76%，�
 测试环境另补 DeferredDelete 清理：pytest-qt 会调用 `deleteLater`，其普通 `processEvents` 不保证处理无主事件循环下的延迟删除，导致跨用例存活窗口累积。该清理仅存在测试夹具；应用的作品关闭保护保持不变。相关 46 项窗口专项在 Mac 27.56 秒全部通过；最终全量及 Windows CI 继续补录。CI 同时保存测试实时日志，即使超时，也保留已经执行部分的诊断，不改变 25 分钟限时或删减测试。
 
 参考 Qt 官方文档：[应用样式的全局作用域](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QApplication.html)、[processEvents 与延迟删除](https://doc.qt.io/qtforpython-6/PySide6/QtCore/QCoreApplication.html)。
+
+进一步的全量资源清理回归发现：嵌入的商品 PreviewBoard 随主窗口关闭时不会自动收到子控件 closeEvent，仍运行的 QProcess 会在界面销毁后回调。已在主窗口关闭、商品编辑器替换和模板对话框完成时显式 shutdown：停计时器、终止预览、阻止排队的刷新重启；普通“取消预览”仍保留原有交互。新增实际子进程关闭回归。相关 12 项通过；优化后前一轮全量 244 条断言通过、用时 71.01 秒，并捕获此 teardown 问题，因此该轮不计为完全通过；修复后的最终完整回归继续补录。

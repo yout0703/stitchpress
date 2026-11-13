@@ -38,3 +38,26 @@ def test_new_windows_reuse_global_appearance_and_only_real_theme_changes_repolis
     assert len(calls) == 1
     apply_appearance(qapp, first, "dark")
     assert len(calls) == 1
+
+
+def test_window_close_stops_inline_preview_and_queued_refresh(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtCore import QProcess
+
+    from stitchpress.app.desktop import Workbench
+
+    monkeypatch.setattr("stitchpress.app.commerce_studio.settings_dir", lambda: tmp_path)
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.show()
+    w.show_page(8)
+    board = w.commerce_panel.editor.board
+    board.refresh()
+    process = board.process
+    assert process is not None
+    w.dirty = False
+    w.close()
+    assert board.process is None and not board.timer.isActive()
+    assert process.state() == QProcess.ProcessState.NotRunning
+    qtbot.wait(50)
+    board.refresh()
+    assert board.process is None

@@ -52,6 +52,7 @@ class PreviewBoard(QWidget):
         self.source_navigation = source_navigation
         self.catalog = False
         self.process = None
+        self._shutdown = False
         self.pages = []
         self.cache = {}
         self.pixmap = QPixmap()
@@ -108,10 +109,12 @@ class PreviewBoard(QWidget):
         self.timer.setInterval(900)
         self.timer.timeout.connect(self.check_stale)
         self.timer.start()
-        QApplication.instance().aboutToQuit.connect(self.stop)
+        QApplication.instance().aboutToQuit.connect(self.shutdown)
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._shutdown = False
+        self.timer.start()
         if not self.pages and self.process is None:
             QTimer.singleShot(0, self.refresh)
 
@@ -140,6 +143,8 @@ class PreviewBoard(QWidget):
         self.refresh()
 
     def refresh(self):
+        if self._shutdown:
+            return
         self.stop()
         try:
             project = self.snapshot()
@@ -223,6 +228,12 @@ class PreviewBoard(QWidget):
         self.list.setEnabled(True)
         self.cancel_button.hide()
 
+    def shutdown(self):
+        """Parent close/destruction does not send closeEvent to embedded widgets."""
+        self._shutdown = True
+        self.timer.stop()
+        self.stop()
+
     def present(self, result):
         row = max(0, self.list.currentRow())
         first = not self.pages
@@ -289,7 +300,7 @@ class PreviewBoard(QWidget):
         self.fit()
 
     def closeEvent(self, event):
-        self.stop()
+        self.shutdown()
         super().closeEvent(event)
 
 
@@ -376,7 +387,7 @@ class TemplatePicker(QDialog):
                 0,
             )
         )
-        self.finished.connect(self.board.stop)
+        self.finished.connect(self.board.shutdown)
 
     def show_covers(self, result):
         for index, (_, value) in enumerate(self.entries):

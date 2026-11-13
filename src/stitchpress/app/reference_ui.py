@@ -174,7 +174,7 @@ class EditorPanel(QWidget):
         )
         if self.editor:
             if hasattr(self.editor, "board"):
-                self.editor.board.stop()
+                self.editor.board.shutdown()
             old_editor = self.form_scroll.takeWidget()
             old_editor.hide()
             old_editor.deleteLater()

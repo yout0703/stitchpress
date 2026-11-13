@@ -1746,6 +1746,10 @@ class Workbench(
         self.recovery_timer.stop()
         self.stop_save_worker()
         self.stop_recovery_worker()
+        from .commerce_studio import PreviewBoard
+
+        for board in self.findChildren(PreviewBoard):
+            board.shutdown()
         self.recovery.clear()
         event.accept()
 

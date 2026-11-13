@@ -272,7 +272,7 @@ class CommerceDialog(QDialog):
             field.setMinimumWidth(0)
             field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.refresh_template_label()
-        self.finished.connect(self.board.stop)
+        self.finished.connect(self.board.shutdown)
 
     def use_photo_scenes(self):
         for index, controls in enumerate(self.scenes):
