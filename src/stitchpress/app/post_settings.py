@@ -5,6 +5,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+from zipfile import ZIP_STORED
 
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256
@@ -59,7 +60,7 @@ def settings_document(project, resource_folder, *, validate=True):
         check = Project.create()
         check.entities = entities
         check.assets = assets
-        check.encode()
+        check.encode(compression=ZIP_STORED)
     record = dict(
         format=FORMAT,
         schema_version=1,
@@ -83,7 +84,7 @@ def save_settings(project, path):
             raise StitchPressError("设置已存在，请另存新版本")
         preliminary, _ = settings_document(project, "resources")
         folder = safe_filename(path.stem) + ".resources-" + digest(preliminary)[:12]
-        document, assets = settings_document(project, folder)
+        document, assets = settings_document(project, folder, validate=False)
         target = path.parent / folder
         if target.exists():
             raise StitchPressError("设置资源目录已存在，请选择新的设置文件名")
@@ -152,7 +153,7 @@ def load_settings(path, *, replacements=None):
     project = Project.create()
     project.entities = record["entities"]
     project.assets = assets
-    project.encode()
+    project.encode(compression=ZIP_STORED)
     return project
 
 

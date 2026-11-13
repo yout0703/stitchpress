@@ -23,6 +23,11 @@ def run(job_path: Path) -> int:
             candidate = output.parent / "prepared.stitchpress"
             atomic_write(candidate, project.encode())
             result = dict(candidate=str(candidate))
+        elif job["operation"] == "settings-export":
+            from .background_save import read_snapshot
+            from .post_settings import save_settings
+
+            result = save_settings(read_snapshot(Path(job["snapshot"])), job["target"])
         elif job["operation"] == "recovery":
             from .recovery import RecoveryStore
             from .store import Project

@@ -364,3 +364,46 @@ def test_prepared_save_cannot_bypass_content_or_external_change_checks(tmp_path)
     with pytest.raises(ConflictError, match="外部修改"):
         writer.commit(expected_seq=1, reads={}, changes={}, prepared_payload=prepared.encode())
     writer.close()
+
+
+def test_settings_export_is_background_snapshot_and_keeps_later_edits(qtbot, tmp_path, monkeypatch):
+    from stitchpress.app.background_settings import export_settings
+    from stitchpress.app.post_settings import load_settings
+
+    monkeypatch.setattr("stitchpress.app.background_settings.settings_dir", lambda: tmp_path)
+    w = Workbench()
+    qtbot.addWidget(w)
+    errors = []
+    monkeypatch.setattr(w, "error", errors.append)
+    w.draft.assets["sources/large.bin"] = b"a" * (9 * 1024**2)
+    w.title_edit.setText("导出时的名称")
+    w.apply_fields()
+    target = tmp_path / "中文设置.json"
+    with monkeypatch.context() as patch:
+
+        def no_ui_encoding(*args, **kwargs):
+            raise AssertionError("主界面不能编码设置资源")
+
+        patch.setattr(Project, "encode", no_ui_encoding)
+        assert export_settings(w, target)
+        assert w._settings_process is not None
+        assert not export_settings(w, target)
+        w.close()
+        assert w._settings_process is not None
+        assert errors and "后台导出" in str(errors.pop())
+        w.title_edit.setText("导出期间继续修改")
+        w.apply_fields()
+        w.show_page(0)
+        qtbot.waitUntil(lambda: w._settings_process is None, timeout=30000)
+    assert not errors
+    assert load_settings(target).entities["metadata"]["title"] == "导出时的名称"
+    assert w.draft.entities["metadata"]["title"] == "导出期间继续修改"
+    assert w.dirty
+    original = target.read_bytes()
+    assert export_settings(w, target)
+    qtbot.waitUntil(lambda: w._settings_process is None, timeout=30000)
+    assert errors and "已存在" in str(errors[-1])
+    assert target.read_bytes() == original
+    assert not list((tmp_path / "settings-work").glob("*/snapshot.json"))
+    w.dirty = False
+    w.close()

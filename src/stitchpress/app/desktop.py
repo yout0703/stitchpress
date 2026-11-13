@@ -1729,6 +1729,10 @@ class Workbench(
             self.log.append("已停止当前本地任务；已有作品保持可用")
 
     def closeEvent(self, event):
+        if getattr(self, "_settings_process", None) is not None:
+            self.error("作品设置仍在后台导出，请完成后再关闭窗口")
+            event.ignore()
+            return
         if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
             self.error("后台任务仍在运行，请等待结束或先安全取消")
             event.ignore()

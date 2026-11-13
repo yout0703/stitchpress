@@ -53,7 +53,7 @@ from stitchpress.platform.settings import settings_dir
 from .commerce_ui import CommerceDialog
 from .local_features import SpecificationDialog
 from .navigation import ROUTES, disclosure, install_navigation, menu_button
-from .post_settings import MissingSettingsAssets, companion_candidates, load_settings, save_settings
+from .post_settings import MissingSettingsAssets, companion_candidates, load_settings
 from .reference_actions import bind_symbol, import_pattern
 from .reference_package import post_fingerprint
 from .text_settings import TextSettingsDialog
@@ -1044,8 +1044,9 @@ class ReferenceFeatures:
                 self, "另存作品设置（连同资源目录保留）", "作品设置.json", "JSON (*.json)"
             )
             if path:
-                save_settings(self.draft, Path(path).with_suffix(".json"))
-                self.statusBar().showMessage("设置 JSON 和相对资源目录已保存，可一起移动重开")
+                from .background_settings import export_settings
+
+                export_settings(self, Path(path).with_suffix(".json"))
         except Exception as exc:
             self.error(exc)
 
