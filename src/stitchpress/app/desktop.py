@@ -430,6 +430,14 @@ class Workbench(
         self.init_local_features()
         self.restore_ai_state()
         self.sync_task_records()
+        from stitchpress import _edition
+
+        self.trial_controller = None
+        if _edition.EDITION != "development":
+            from .license_ui import TrialController
+
+            self.setWindowTitle(self.windowTitle() + " · 七天离线试用版")
+            self.trial_controller = TrialController(self)
 
     def build_ui(self):
         build_workspace(self, Canvas)
@@ -1732,6 +1740,17 @@ class Workbench(
             self.log.append("已停止当前本地任务；已有作品保持可用")
 
     def closeEvent(self, event):
+        trial_locked = self.trial_controller is not None and self.trial_controller.locked
+        if trial_locked:
+            if self.trial_controller.recovery_path is None:
+                self.error("草稿恢复副本尚未安全保存，请恢复授权后保存，或检查恢复目录权限")
+                event.ignore()
+                return
+            if self._save_process is not None or self._recovery_process is not None:
+                self.error("正在保护未保存数据，请等待后台保存完成后退出")
+                event.ignore()
+                return
+            # Expiry backup is an independent recovery candidate and is never cleared here.
         if getattr(self, "_settings_process", None) is not None:
             self.error("作品设置仍在后台导出，请完成后再关闭窗口")
             event.ignore()
@@ -1740,7 +1759,7 @@ class Workbench(
             self.error("后台任务仍在运行，请等待结束或先安全取消")
             event.ignore()
             return
-        if not self.confirm_discard():
+        if not trial_locked and not self.confirm_discard():
             event.ignore()
             return
         if self.coordinator:
@@ -1764,6 +1783,18 @@ def main():
     from .branding import application_icon
 
     app.setWindowIcon(application_icon())
+    from stitchpress.platform.licensing import license_status
+
+    if not license_status().allowed:
+        from .appearance import apply_appearance
+        from .language import install_chinese
+        from .license_ui import LicenseDialog
+
+        install_chinese(app)
+        dialog = LicenseDialog()
+        apply_appearance(app, dialog, "light")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return 0
     window = Workbench()
     window.show()
     QTimer.singleShot(0, window.canvas.fit)

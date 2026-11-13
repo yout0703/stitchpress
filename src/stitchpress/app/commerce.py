@@ -37,6 +37,9 @@ def export_commerce(
     cancel=lambda: False,
     progress=lambda event: None,
 ):
+    from stitchpress.platform.licensing import require_license
+
+    require_license()
     if not targets or len(set(targets)) != len(targets) or not set(targets) <= set(TARGETS):
         raise StitchPressError("商品导出目标为空、重复或无效")
     settings = CommerceSettings(**project.entities.get("commerce", {}))
@@ -183,6 +186,7 @@ def export_commerce(
                 raise StitchPressError("目标由其他任务建立，未覆盖")
             receipt["status"] = "publishing"
             atomic_write(journal, canonical_bytes(receipt))
+            require_license()
             staging.rename(destination)
         receipt.update(status="completed", files=len(targets))
         atomic_write(journal, canonical_bytes(receipt))

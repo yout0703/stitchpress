@@ -164,6 +164,9 @@ def export_package(
     cancel: Callable[[], bool] = lambda: False,
     progress: Callable[[dict], None] = lambda event: None,
 ) -> dict:
+    from stitchpress.platform.licensing import require_license
+
+    require_license()
     reference = reference or ReferenceSettings()
     showcase_options = showcase_options or ShowcaseSettings()
     targets = FULL_TARGETS if targets is None else frozenset(targets)
@@ -492,6 +495,7 @@ def export_package(
         with exclusive_lock(destination.parent / f".{destination.name}.publish.lock"):
             if destination.exists():
                 raise StitchPressError("目标目录已由其他任务建立，未覆盖")
+            require_license()
             os.rename(staging, destination)
         state.update(
             status="completed",
@@ -519,6 +523,9 @@ def export_package(
 
 
 def zip_package(directory: Path, target: Path, receipt: dict | None = None) -> dict:
+    from stitchpress.platform.licensing import require_license
+
+    require_license()
     if receipt:
         from .jobs import verify_delivery
 
@@ -557,6 +564,7 @@ def zip_package(directory: Path, target: Path, receipt: dict | None = None) -> d
         with exclusive_lock(target.with_suffix(target.suffix + ".lock")):
             if target.exists():
                 raise StitchPressError("ZIP已由另一任务建立，未覆盖")
+            require_license()
             os.rename(temporary, target)
         return {"files": len(files), "sha256": sha256_file(target), "member_sha256": expected}
     finally:

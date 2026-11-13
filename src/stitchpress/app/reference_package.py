@@ -195,6 +195,9 @@ def export_reference(
     cancel=lambda: False,
     progress=lambda event: None,
 ):
+    from stitchpress.platform.licensing import require_license
+
+    require_license()
     options = options or PostSettings(**project.entities.get("post", {}))
     summary = preflight(project, options, demo=demo)
     destination, work = Path(destination), Path(work)
@@ -428,6 +431,7 @@ def export_reference(
         with exclusive_lock(destination.parent / f".{destination.name}.publish.lock"):
             if destination.exists():
                 raise StitchPressError("目标已由其他任务建立，未覆盖")
+            require_license()
             staging.rename(destination)
         state.update(
             status="completed",

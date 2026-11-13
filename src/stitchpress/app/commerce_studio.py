@@ -147,6 +147,9 @@ class PreviewBoard(QWidget):
             return
         self.stop()
         try:
+            from stitchpress.platform.licensing import require_license
+
+            require_license()
             project = self.snapshot()
             key = fingerprint(project)
             self.attempted_sha = key

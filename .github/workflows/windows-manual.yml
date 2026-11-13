@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'fixtures/**'
+      - 'release/**'
       - 'tools/**'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -16,6 +17,7 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'fixtures/**'
+      - 'release/**'
       - 'tools/**'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -68,6 +70,16 @@ jobs:
           uv run --all-groups python tools/validate_bundle_commerce.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/commerce
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Compress-Archive -Path dist/windows/StitchPress -DestinationPath dist/windows/StitchPress-windows-x64-local.zip
+      - name: Build protected seven-day offline trial candidate
+        run: uv run --all-groups python tools/build_desktop.py --edition trial --protect --public-keys release/trial-public-keys.json
+      - name: Verify protected trial denies unactivated business operations
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse dist/windows-trial/StitchPress "dist/windows-trial/七天试用中文路径"
+          uv run --all-groups python tools/validate_inactive_trial.py "dist/windows-trial/七天试用中文路径/StitchPress.exe" --output reports/local/windows/trial-inactive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item release/TRIAL-README.zh-CN.md dist/windows-trial/StitchPress/试用说明.md
+          Compress-Archive -Path dist/windows-trial/StitchPress -DestinationPath dist/windows-trial/StitchPress-windows-x64-trial-candidate.zip
       - name: Retain checks and build logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -76,6 +88,10 @@ jobs:
           path: |
             reports/local/windows/
             dist/windows/build.log
+            dist/windows-trial/build.log
+            dist/windows-trial/protection-build.log
+            dist/windows-trial/protection.json
+            dist/windows-trial/protection-audit.json
           retention-days: 30
           if-no-files-found: warn
       - name: Retain unsigned local test application
@@ -83,5 +99,12 @@ jobs:
         with:
           name: windows-app-${{ github.run_id }}
           path: dist/windows/StitchPress-windows-x64-local.zip
+          retention-days: 30
+          if-no-files-found: error
+      - name: Retain unsigned protected offline trial candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-offline-trial-${{ github.run_id }}
+          path: dist/windows-trial/StitchPress-windows-x64-trial-candidate.zip
           retention-days: 30
           if-no-files-found: error

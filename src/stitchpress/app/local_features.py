@@ -967,6 +967,10 @@ class LocalFeatures:
                 }.items():
                     if key in pending:
                         widget.setText(pending[key])
+                if forms := self.draft.entities.pop("trial_pending_forms", None):
+                    from .license_ui import restore_pending_forms
+
+                    restore_pending_forms(self, forms)
                 self.dirty = True
                 self.update_document_state()
                 self.statusBar().showMessage("已恢复草稿副本，请核对后另存；原始恢复记录保留")

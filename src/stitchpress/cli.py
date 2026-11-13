@@ -12,6 +12,11 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
     sub.add_parser("gui")
+    sub.add_parser("license-status", help="查看试用授权状态")
+    request = sub.add_parser("license-request", help="导出离线机器码请求，不开始试用")
+    request.add_argument("output", type=Path)
+    activate = sub.add_parser("license-install", help="导入离线签名试用授权")
+    activate.add_argument("license", type=Path)
     demo = sub.add_parser("demo")
     demo.add_argument("output", type=Path)
     demo.add_argument("--width", type=int, default=48)
@@ -75,20 +80,52 @@ def main(argv=None):
 
 
 def execute(args):
-    from .app.fixtures import save_demo
-    from .app.store import Project
-    from .core.models import Design
+    from .platform.licensing import (
+        device_request,
+        license_manager,
+        license_status,
+        read_license_file,
+        require_license,
+    )
 
-    if args.command == "gui":
+    if args.command not in {
+        "gui",
+        "doctor",
+        "license-status",
+        "license-request",
+        "license-install",
+    }:
+        require_license()
+        from .app.store import Project
+        from .core.models import Design
+
+    if args.command == "license-status":
+        from dataclasses import asdict
+
+        data = asdict(license_status())
+    elif args.command == "license-request":
+        from .core.identity import canonical_bytes
+        from .platform.files import atomic_write
+
+        if args.output.exists():
+            raise StitchPressError("目标已存在，请选择新的机器码文件名")
+        atomic_write(args.output, canonical_bytes(device_request()))
+        data = {"saved": str(args.output), "trial_started": False}
+    elif args.command == "license-install":
+        from dataclasses import asdict
+
+        data = asdict(license_manager().install(read_license_file(args.license)))
+    elif args.command == "gui":
         from .app.desktop import main as desktop
 
         return desktop()
-    if args.command == "doctor":
+    elif args.command == "doctor":
         import sys
 
         from PIL import features
         from PySide6.QtCore import qVersion
 
+        from . import _edition
         from .platform.launch import is_compiled, worker_program
 
         data = {
@@ -102,6 +139,7 @@ def execute(args):
             "compiled": is_compiled(),
             "runtime_executable": sys.executable,
             "worker_program": worker_program(),
+            "edition": _edition.EDITION,
         }
     elif args.command == "reference-export":
         from dataclasses import replace
@@ -123,6 +161,8 @@ def execute(args):
             progress=lambda event: print(json.dumps(event, ensure_ascii=False), flush=True),
         )
     elif args.command == "demo":
+        from .app.fixtures import save_demo
+
         if args.output.exists():
             raise StitchPressError("目标作品已存在，请另存路径")
         save_demo(args.output, args.width, args.height, args.colors)

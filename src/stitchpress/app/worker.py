@@ -11,6 +11,11 @@ def run(job_path: Path) -> int:
     job = json.loads(job_path.read_bytes())
     output = Path(job["output"])
     try:
+        from stitchpress.platform.licensing import require_license
+
+        recovery_only = job["operation"] in {"encode-project", "recovery"}
+        if not recovery_only:
+            require_license()
         if job["operation"] == "encode-project":
             from .store import Project
 
@@ -352,6 +357,8 @@ def run(job_path: Path) -> int:
             )
         else:
             raise ValueError("未知工作进程操作")
+        if not recovery_only:
+            require_license()
         atomic_write(
             output,
             canonical_bytes(

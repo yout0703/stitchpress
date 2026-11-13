@@ -75,6 +75,9 @@ def settings_document(project, resource_folder, *, validate=True):
 
 
 def save_settings(project, path):
+    from stitchpress.platform.licensing import require_license
+
+    require_license()
     path = Path(path)
     if path.suffix.lower() != ".json":
         raise StitchPressError("作品设置须为JSON")
@@ -92,6 +95,7 @@ def save_settings(project, path):
         try:
             for data in assets.values():
                 atomic_write(staging / (sha256(data) + ".bin"), data)
+            require_license()
             staging.rename(target)
             atomic_write(path, canonical_bytes(document))
         except BaseException:
