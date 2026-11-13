@@ -48,7 +48,10 @@ jobs:
       - run: uv run --all-groups ruff format --check src tests tools
       - name: Run full Windows test suite
         timeout-minutes: 25
-        run: uv run --all-groups pytest -v -o faulthandler_timeout=180 --durations=12 --junitxml=reports/local/windows/tests.xml
+        run: |
+          New-Item -ItemType Directory -Force reports/local/windows | Out-Null
+          uv run --all-groups pytest -v -o faulthandler_timeout=180 --durations=12 --junitxml=reports/local/windows/tests.xml 2>&1 | Tee-Object -FilePath reports/local/windows/tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: uv run --all-groups python tools/build_desktop.py
       - name: Verify packaged executable and Chinese installation directory
         shell: pwsh

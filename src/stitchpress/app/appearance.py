@@ -86,13 +86,14 @@ def apply_appearance(app: QApplication, root, theme):
             for name in ("chevron-down", "chevron-up", "check")
         },
     }
-    app.setStyle("Fusion")
-    font = QFont("PingFang SC" if sys.platform == "darwin" else "Segoe UI", 10)
-    font.setFamilies([font.family(), "Microsoft YaHei UI", "Noto Sans CJK SC", "sans-serif"])
-    app.setFont(font)
+    if not getattr(app, "_stitchpress_base_appearance", False):
+        app.setStyle("Fusion")
+        font = QFont("PingFang SC" if sys.platform == "darwin" else "Segoe UI", 10)
+        font.setFamilies([font.family(), "Microsoft YaHei UI", "Noto Sans CJK SC", "sans-serif"])
+        app.setFont(font)
+        app._stitchpress_base_appearance = True
     # Use a complete stylesheet rather than combining QPalette overrides with QSS.
-    app.setStyleSheet(
-        Template("""
+    stylesheet = Template("""
         QWidget { color: $text; font-size: 13px; selection-background-color: $selected;
                   selection-color: $text; }
         QMainWindow, QDialog, QStackedWidget { background: $bg; }
@@ -231,7 +232,10 @@ def apply_appearance(app: QApplication, root, theme):
         QToolTip { background: $raised; color: $text; border: 1px solid $line;
             padding: 6px; }
         """).substitute(t)
-    )
+    # Reapplying even identical QSS repolishes every live widget in Qt.
+    # New windows inherit the installed sheet; only a real theme change replaces it.
+    if app.styleSheet() != stylesheet:
+        app.setStyleSheet(stylesheet)
     for button in root.findChildren(QAbstractButton):
         if name := button.property("iconName"):
             button.setIcon(themed_icon(name, theme, primary=button.property("role") == "primary"))

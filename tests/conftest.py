@@ -3,6 +3,17 @@ import pytest
 from stitchpress.core.models import ThreadColor, new_design
 
 
+@pytest.fixture(autouse=True)
+def finish_deferred_widget_cleanup(request):
+    yield
+    if "qtbot" in request.fixturenames:
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        # pytest-qt closes/deletes registered widgets in its teardown hook.
+        # processEvents alone does not dispatch DeferredDelete without app.exec().
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 @pytest.fixture
 def minimal():
     colors = [
