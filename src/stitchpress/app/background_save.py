@@ -63,10 +63,7 @@ def request_save(owner, *, copy_target=None):
         or sum(map(len, owner.draft.assets.values())) < 8 * 1024**2
     ):
         return owner.save()
-    if owner.reference_pending():
-        owner.error("有尚未应用的页面参数，请先应用对应页面")
-        return False
-    if not owner.apply_fields():
+    if not owner.check_save_forms():
         return False
     folder = None
     copy_coordinator = None

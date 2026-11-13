@@ -1018,14 +1018,18 @@ class Workbench(
                 coordinator.close()
             self.error(exc)
 
+    def check_save_forms(self):
+        try:
+            return self.require_reference_applied()
+        except Exception as exc:
+            self.error(exc)
+            return False
+
     def save(self):
         if self._save_process is not None:
             self.statusBar().showMessage("后台保存仍在运行，请稍后再保存")
             return False
-        if self.reference_pending():
-            self.error("有尚未应用的页面参数，请先保存 / 应用对应页面，或取消恢复")
-            return False
-        if not self.apply_fields():
+        if not self.check_save_forms():
             return False
         if self.coordinator is None:
             return self.save_as()
@@ -1072,10 +1076,7 @@ class Workbench(
         if self._save_process is not None:
             self.statusBar().showMessage("后台保存仍在运行，请完成后再另存")
             return False
-        if self.reference_pending():
-            self.error("有尚未应用的页面参数，请先保存 / 应用对应页面，或取消恢复")
-            return False
-        if not self.apply_fields():
+        if not self.check_save_forms():
             return False
         path, _ = QFileDialog.getSaveFileName(
             self, "另存作品", "作品.stitchpress", "StitchPress (*.stitchpress)"

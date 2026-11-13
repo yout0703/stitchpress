@@ -17,6 +17,31 @@ from stitchpress.core.resources import assign_symbols, library_from_assets
 from stitchpress.core.streaming import save_production_stream
 
 
+@pytest.mark.parametrize("action", ["save", "save_as", "request_save"])
+def test_save_locates_unapplied_page_without_touching_file(qtbot, tmp_path, monkeypatch, action):
+    from stitchpress.app.store import Coordinator
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    path = tmp_path / "保存定位.stitchpress"
+    writer = Coordinator(path, demo_project())
+    writer.commit(expected_seq=0, reads={}, changes={})
+    w.set_project(writer.project, path, writer)
+    original = path.read_bytes()
+    w.draft.assets["sources/large.bin"] = b"a" * (9 * 1024**2)
+    w.spec_panel.editor.reading_dpi.setValue(150)
+    w.show_page(3)
+    errors = []
+    monkeypatch.setattr(w, "error", errors.append)
+    assert not getattr(w, action)()
+    assert w.pages.currentIndex() == 4 and w.print_tabs.currentIndex() == 0
+    assert errors and "已定位" in str(errors[-1])
+    assert path.read_bytes() == original and w._save_process is None
+    w.spec_panel.reload()
+    w.dirty = False
+    w.close()
+
+
 def test_five_workspaces_apply_cancel_conflict_and_project_switch(qtbot, monkeypatch):
     w = Workbench()
     qtbot.addWidget(w)
