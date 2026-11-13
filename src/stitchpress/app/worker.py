@@ -360,21 +360,24 @@ def run(job_path: Path) -> int:
 
         from .ai import RemoteUnknown
 
+        status = (
+            "remote_unknown"
+            if isinstance(exc, RemoteUnknown)
+            else "cancelled"
+            if isinstance(exc, Cancelled)
+            else "failed"
+        )
         atomic_write(
             output,
             canonical_bytes(
                 {
-                    "status": "remote_unknown"
-                    if isinstance(exc, RemoteUnknown)
-                    else "cancelled"
-                    if isinstance(exc, Cancelled)
-                    else "failed",
+                    "status": status,
                     "error": str(exc),
                     "base_sha": job.get("base_sha"),
                 }
             ),
         )
-        print(json.dumps({"stage": "failed", "error": str(exc)}, ensure_ascii=False), flush=True)
+        print(json.dumps({"stage": status, "error": str(exc)}, ensure_ascii=False), flush=True)
         return 2
 
 

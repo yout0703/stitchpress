@@ -1407,6 +1407,10 @@ class Workbench(
                     "saving-settings": "保存设置",
                     "verifying": "反读核验",
                     "publishing": "发布新目录",
+                    "completed": "已完成",
+                    "cancelled": "已取消",
+                    "failed": "出图失败",
+                    "remote_unknown": "结果待核对",
                 }
                 for line in content.splitlines():
                     try:
@@ -1499,6 +1503,9 @@ class Workbench(
                 TaskHistory.finish(job["folder"], result["status"])
                 if job["operation"] == "analyze" and job["project_id"] == self.draft.project_id:
                     self.sync_task_records()
+            if result["status"] == "cancelled":
+                self.statusBar().showMessage("任务已取消；未发布不完整文件，已有作品保持可用")
+                return
             if result["status"] != "completed":
                 raise StitchPressError(result.get("error", "任务失败"))
             self.statusBar().showMessage("本地任务已完成")

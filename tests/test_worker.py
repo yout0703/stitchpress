@@ -76,6 +76,7 @@ def test_worker_error_exits_with_chinese_report_on_legacy_console(tmp_path, monk
             stream.flush()
         response = json.loads(output.read_bytes())
         assert response["status"] == status
+        assert json.loads(raw.getvalue().decode("utf-8").splitlines()[-1])["stage"] == status
         assert response["error"] in raw.getvalue().decode("utf-8")
         assert not target.exists()
         assert not list(tmp_path.glob(".stitchpress-post-*"))

@@ -53,6 +53,65 @@ def test_corrupt_symbol_folder_names_file_and_preserves_project(tmp_path):
     assert (digest(project.entities), project.assets) == before
 
 
+def test_symbol_preview_clears_on_filter_or_library_refresh(qtbot):
+    from PySide6.QtCore import Qt
+
+    from stitchpress.core.resources import library_assets, revise_library
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.ref_symbols.setCurrentRow(0)
+    assert w.ref_symbol_name.text().startswith("当前符号")
+    assert not w.ref_symbol_actual.pixmap().isNull()
+    w.ref_symbol_search.setText("no-matching-symbol")
+    assert w.ref_symbols.currentItem() is None
+    assert w.ref_symbol_name.text() == "选择符号与线色"
+    assert w.ref_symbol_actual.pixmap().isNull()
+    w.ref_symbol_search.clear()
+    w.ref_symbols.setCurrentRow(0)
+    w._symbol_page_sha = None
+    w.refresh_reference_symbols()
+    assert w.ref_symbols.currentRow() == 0
+    assert w.ref_symbol_name.text().startswith("当前符号")
+    w.ref_symbols.setCurrentRow(w.ref_symbols.count() - 1)
+    key = w.ref_symbols.currentItem().data(Qt.ItemDataRole.UserRole)
+    revised = revise_library(
+        w.symbol_library(), "remove", key=key, used=frozenset(w.draft.entities["mapping"].values())
+    )
+    record, assets = library_assets(revised)
+    w.draft.entities["library"] = record
+    w.draft.assets.update(assets)
+    w.refresh()
+    assert w.ref_symbols.currentItem() is None
+    assert w.ref_symbol_name.text() == "选择符号与线色"
+    assert w.ref_symbol_actual.pixmap().isNull()
+    w.close()
+
+
+def test_cancelled_reference_export_is_not_reported_as_failure(qtbot, tmp_path, monkeypatch):
+    import json
+
+    from PySide6.QtCore import QProcess
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    errors = []
+    monkeypatch.setattr(w, "error", errors.append)
+    output = tmp_path / "result.json"
+    output.write_bytes(canonical_bytes(dict(status="cancelled", error="参考出图已取消")))
+    (tmp_path / "task.json").write_bytes(canonical_bytes(dict(status="running")))
+    destination = tmp_path / "未发布的集合"
+    w.job = dict(
+        operation="reference-export", output=output, folder=tmp_path, destination=destination
+    )
+    w.cancel_button.setEnabled(True)
+    w.worker_finished(2, QProcess.ExitStatus.NormalExit)
+    assert not errors and "已取消" in w.statusBar().currentMessage()
+    assert not w.cancel_button.isEnabled() and not destination.exists()
+    assert json.loads((tmp_path / "task.json").read_bytes())["status"] == "cancelled"
+    w.close()
+
+
 def test_five_workspaces_apply_cancel_conflict_and_project_switch(qtbot, monkeypatch):
     w = Workbench()
     qtbot.addWidget(w)

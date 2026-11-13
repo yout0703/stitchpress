@@ -1083,6 +1083,8 @@ class ReferenceFeatures:
             f"{library.name} · {len(library.symbols)} 个符号 · "
             + ("已带 CMYK ICC" if library.icc else "无 ICC，仅草稿")
         )
+        current = self.ref_symbols.currentItem()
+        selected_key = current.data(Qt.ItemDataRole.UserRole) if current else None
         self.ref_symbols.clear()
         for symbol in library.symbols:
             label = (
@@ -1095,6 +1097,8 @@ class ReferenceFeatures:
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setData(Qt.ItemDataRole.UserRole, symbol.key)
             self.ref_symbols.addItem(item)
+            if symbol.key == selected_key:
+                self.ref_symbols.setCurrentItem(item)
         self.ref_mapping.setRowCount(0)
         for index in sorted(
             range(len(self.design.palette)), key=lambda i: natural_color_key(self.design.palette[i])
@@ -1130,9 +1134,16 @@ class ReferenceFeatures:
         for i in range(self.ref_symbols.count()):
             item = self.ref_symbols.item(i)
             item.setHidden(query not in (item.text() + " " + item.toolTip()).casefold())
+        if (current := self.ref_symbols.currentItem()) is not None and current.isHidden():
+            self.ref_symbols.setCurrentRow(-1)
 
     def show_reference_symbol(self, current, previous=None):
         if not current:
+            self.ref_symbol_zoom.setText("符号")
+            self.ref_symbol_zoom.setToolTip("")
+            self.ref_symbol_actual.clear()
+            self.ref_symbol_actual.setToolTip("")
+            self.ref_symbol_name.setText("选择符号与线色")
             return
         library = self.symbol_library()
         image = screen_rgb(
