@@ -53,6 +53,9 @@ def main():
         raise RuntimeError(f"Packaged version mismatch: expected {declared}, got {doctor['app']}")
     if not doctor["compiled"] or Path(doctor["worker_program"]).resolve() != binary:
         raise RuntimeError("Compiled worker launcher does not resolve to the native binary")
+    library = doctor["builtin_symbol_library"]
+    if library["symbols"] != 152 or not library["icc_sha"] or "彩色" not in library["name"]:
+        raise RuntimeError("Packaged application is missing the built-in color symbol library")
     sample = output / "原生子进程.stitchpress"
     if not sample.exists():
         run(

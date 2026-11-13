@@ -1,4 +1,4 @@
-"""Explicit local import of customer's existing resources, never installation defaults."""
+"""Explicit local resource import, alongside the user-authorized built-in color library."""
 
 import json
 from pathlib import Path

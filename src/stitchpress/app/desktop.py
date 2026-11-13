@@ -55,7 +55,7 @@ from .brief import BriefFeatures
 from .candidates import CandidateFeatures
 from .commerce_ui import CommerceFeatures
 from .context import review_context
-from .fixtures import demo_project
+from .fixtures import new_project
 from .grid_item import StitchGridItem
 from .help_feedback import HelpFeedbackFeatures
 from .local_features import LocalFeatures, PagePreview
@@ -411,7 +411,7 @@ class Workbench(
         self.project_path = None
         from .commerce_templates import recommended_settings
 
-        self.draft = demo_project()
+        self.draft = new_project()
         self.draft.entities["commerce"] = recommended_settings().to_dict()
         self.baseline = copy.deepcopy(self.draft)
         self.process = None
@@ -1008,7 +1008,7 @@ class Workbench(
         if self.confirm_discard():
             from .commerce_templates import recommended_settings
 
-            project = demo_project()
+            project = new_project()
             project.entities["commerce"] = recommended_settings().to_dict()
             self.set_project(project)
 

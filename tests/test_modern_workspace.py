@@ -221,14 +221,14 @@ def test_editor_reload_hides_retired_buttons_and_preserves_compact_fields(qtbot)
     assert all(box.maximumWidth() == 85 for box in colors)
     assert w.spec_panel.editor.fabric_fields["sx"].maximumWidth() == 110
     w.show_page(6)
-    w.ref_symbol_search.setText("int:12")
+    w.ref_symbol_search.setText("str:012")
     visible = [
         w.ref_symbols.item(i)
         for i in range(w.ref_symbols.count())
         if not w.ref_symbols.item(i).isHidden()
     ]
-    assert len(visible) == 1 and visible[0].text() == "12"
-    assert visible[0].data(Qt.ItemDataRole.UserRole) == "int:12"
+    assert len(visible) == 1 and visible[0].text() == "012"
+    assert visible[0].data(Qt.ItemDataRole.UserRole) == "str:012"
     w.close()
 
 

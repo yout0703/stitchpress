@@ -63,6 +63,7 @@ def test_save_as_adds_portable_extension(qtbot, tmp_path, monkeypatch):
         lambda *args: (str(tmp_path / "无后缀作品"), ""),
     )
     assert window.save_as()
+    qtbot.waitUntil(lambda: window._save_process is None, timeout=60000)
     assert (tmp_path / "无后缀作品.stitchpress").is_file()
     assert not (tmp_path / "无后缀作品").exists()
     window.close()
@@ -85,7 +86,7 @@ def test_rejected_large_candidate_does_not_replace_existing_master(qtbot):
     qtbot.addWidget(window)
     original = window.design.content_sha
     with pytest.raises(StitchPressError, match="容量"):
-        window.adopt_design(replace(sample_design(67, 1, 67), labels=(tuple(range(67)),)))
+        window.adopt_design(replace(sample_design(153, 1, 153), labels=(tuple(range(153)),)))
     assert window.design.content_sha == original
     assert not window.history
     window.dirty = False

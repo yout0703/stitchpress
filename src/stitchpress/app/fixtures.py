@@ -51,6 +51,21 @@ def demo_project(width=48, height=64, colors=8):
     return project
 
 
+def new_project():
+    """First launch and File/New share the shipped color library; fixtures stay independent."""
+    from stitchpress.core.resources import assign_symbols, builtin_library
+
+    project = demo_project()
+    library = builtin_library()
+    record, assets = library_assets(library)
+    project.entities["library"] = record
+    project.assets = assets
+    project.entities["mapping"] = assign_symbols(
+        sample_design(), library, strategy="color-nearest-v1"
+    )
+    return project
+
+
 def save_demo(path: Path, width=48, height=64, colors=8):
     from stitchpress.platform.files import atomic_write
 

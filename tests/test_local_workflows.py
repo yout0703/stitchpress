@@ -41,6 +41,7 @@ def test_recovery_includes_unfinished_invalid_form_without_corrupting_master(
     window.sx.setText("unfinished-")
     window.title_edit.setText("尚未离开输入框的标题")
     window.checkpoint_draft()
+    qtbot.waitUntil(lambda: window._recovery_process is None, timeout=60000)
     record = RecoveryStore(tmp_path / "recovery").candidates()[0]
     restored = RecoveryStore.restore(record)
     assert restored.entities["recovery_form"]["sx"] == "unfinished-"

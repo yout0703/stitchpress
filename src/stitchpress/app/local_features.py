@@ -941,6 +941,9 @@ class LocalFeatures:
         if process is not None:
             self._recovery_process = None
             process.kill()
+            # Drain finished while the owning window and QProcess still exist.
+            # Otherwise parent destruction can race the queued cleanup callback.
+            process.waitForFinished(1500)
 
     def recover_draft(self):
         records = self.recovery.candidates()

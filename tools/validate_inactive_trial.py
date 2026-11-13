@@ -36,6 +36,8 @@ def main():
 
     doctor = run("doctor", ["doctor"], 0)
     assert doctor["edition"] == "trial" and doctor["compiled"] is True
+    library = doctor["builtin_symbol_library"]
+    assert library["symbols"] == 152 and library["icc_sha"] and "彩色" in library["name"]
     status = run("status", ["license-status"], 0)
     assert status["code"] == "unactivated", status
     run("request", ["license-request", str(output / "device-request.json")], 0)
@@ -59,6 +61,7 @@ def main():
         "checks": checks,
         "edition": doctor["edition"],
         "business_locked_without_license": True,
+        "builtin_symbol_library": library,
     }
     (output / "verification.json").write_text(json.dumps(result, indent=2), "utf-8")
     print(json.dumps(result))

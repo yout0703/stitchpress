@@ -306,6 +306,8 @@ def test_live_ui_lock_preserves_pending_invalid_forms_and_recovers(tmp_path, qtb
     assert not gate.locked
     window.dirty = False
     window.confirm_discard = lambda: True
+    window.close()
+    assert window._recovery_process is None
 
 
 def test_license_dialog_stops_polling_after_close(qtbot):

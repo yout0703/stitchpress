@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from stitchpress.app.fixtures import demo_project
+from stitchpress.app.fixtures import new_project
 from stitchpress.app.jobs import verify_delivery
 from stitchpress.app.post_settings import load_settings
 from stitchpress.app.reference_actions import import_pattern
@@ -33,7 +33,7 @@ def main():
     args = parser.parse_args()
     binary, root = args.binary.resolve(), args.output.resolve()
     root.mkdir(parents=True, exist_ok=True)
-    initial = demo_project()
+    initial = new_project()
     if args.factory_project:
         resources = Project.decode(args.factory_project.read_bytes())
         initial.assets.update(resources.assets)
@@ -192,6 +192,7 @@ def main():
         failure_status=failed["status"],
         review_override_rejected=bool(args.factory_project),
         source_project_unchanged=True,
+        builtin_color_library=not bool(args.factory_project),
         native_os=os.name,
         visual="pending",
         windows="pending",

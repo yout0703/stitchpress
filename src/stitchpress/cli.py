@@ -126,8 +126,11 @@ def execute(args):
         from PySide6.QtCore import qVersion
 
         from . import _edition
+        from .core.identity import sha256
+        from .core.resources import builtin_library
         from .platform.launch import is_compiled, worker_program
 
+        library = builtin_library()
         data = {
             "app": __version__,
             "python": platform.python_version(),
@@ -140,6 +143,12 @@ def execute(args):
             "runtime_executable": sys.executable,
             "worker_program": worker_program(),
             "edition": _edition.EDITION,
+            "builtin_symbol_library": {
+                "name": library.name,
+                "symbols": len(library.symbols),
+                "revision": library.revision,
+                "icc_sha": sha256(library.icc),
+            },
         }
     elif args.command == "reference-export":
         from dataclasses import replace

@@ -1310,9 +1310,9 @@ class ReferenceFeatures:
         self.refresh()
 
     def select_reference_library(self):
-        from stitchpress.core.resources import demo_library, library_assets
+        from stitchpress.core.resources import builtin_library, library_assets
 
-        base, base_assets = library_assets(demo_library())
+        base, base_assets = library_assets(builtin_library())
         records = {
             v["revision"]: v
             for k, v in self.draft.entities.items()

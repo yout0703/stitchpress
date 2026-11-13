@@ -1,7 +1,9 @@
 import io
 import json
+import tarfile
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageCms, ImageDraw, ImageFont
@@ -210,6 +212,47 @@ def demo_library(count: int = 66) -> SymbolLibrary:
     )
 
 
+def _read_builtin_library(path: Path) -> SymbolLibrary:
+    """Read checked members in memory; never extract an archive onto the filesystem."""
+    try:
+        with tarfile.open(path, "r:xz") as archive:
+            members = archive.getmembers()
+            names = [member.name for member in members]
+            if (
+                len(names) != len(set(names))
+                or len(members) > 514
+                or any(not member.isfile() or member.size > 8 * 1024 * 1024 for member in members)
+                or sum(member.size for member in members) > 256 * 1024 * 1024
+            ):
+                raise ValueError("Invalid resource members")
+            manifest = json.loads(archive.extractfile("manifest.json").read())
+            if manifest["schema"] != "stitchpress-bundled-symbols/v1":
+                raise ValueError("Unknown resource schema")
+            expected = manifest["sha256"]
+            if set(names) != {"manifest.json", *expected}:
+                raise ValueError("Unexpected resource members")
+            assets = {}
+            for name, checksum in expected.items():
+                data = archive.extractfile(name).read()
+                if sha256(data) != checksum:
+                    raise ValueError("Resource hash mismatch")
+                assets[name] = data
+            library = library_from_assets(manifest["library"], assets)
+            if len(library.symbols) != 152 or not library.icc:
+                raise ValueError("Incomplete color library")
+            return library
+    except (OSError, tarfile.TarError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ResourceError("内置彩色符号库缺失或损坏，请重新解压完整的软件包") from exc
+
+
+@lru_cache(maxsize=1)
+def builtin_library() -> SymbolLibrary:
+    """User-authorized customer colors, cached once; no developer-path dependencies."""
+    return _read_builtin_library(
+        Path(__file__).parents[1] / "resources" / "symbols" / "customer-152.tar.xz"
+    )
+
+
 def load_catalog(data: bytes, brand: str = "DMC") -> tuple[ThreadColor, ...]:
     values = json.loads(data)
     if not isinstance(values, list) or not 1 <= len(values) <= 4096:
@@ -246,18 +289,23 @@ def assign_symbols(
     if strategy == "color-nearest-v1":
         import numpy as np
 
+        transform = (
+            ImageCms.buildTransformFromOpenProfiles(
+                ImageCms.ImageCmsProfile(io.BytesIO(library.icc)),
+                ImageCms.createProfile("sRGB"),
+                "CMYK",
+                "RGB",
+                renderingIntent=1,
+            )
+            if library.icc
+            else None
+        )
         for symbol in library.symbols:
             image = symbol.image()
             ink = np.any(np.asarray(image) > 0, axis=2)
             rgb = (
-                ImageCms.profileToProfile(
-                    image,
-                    ImageCms.ImageCmsProfile(io.BytesIO(library.icc)),
-                    ImageCms.createProfile("sRGB"),
-                    outputMode="RGB",
-                    renderingIntent=1,
-                )
-                if library.icc
+                ImageCms.applyTransform(image, transform)
+                if transform is not None
                 else image.convert("RGB")
             )
             pixels = np.asarray(rgb)[ink]

@@ -480,7 +480,7 @@ def build_export(w):
     el.addWidget(card)
     el.addWidget(
         label(
-            "示例库只供演示。正式导出需要客户资源及当前母版审核记录。\n"
+            "正式导出需核对符号、色彩配置及当前母版审核记录。\n"
             "Windows、工厂试印与洗水尚未验证；外部 PDF / Excel 显示另行登记。",
             "muted",
             True,
