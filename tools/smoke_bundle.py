@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 
 from PIL import Image
@@ -45,6 +46,11 @@ def main():
         return result.stdout
 
     doctor = json.loads(run(["--internal-cli", "doctor"]))
+    declared = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    if doctor["app"] != declared:
+        raise RuntimeError(f"Packaged version mismatch: expected {declared}, got {doctor['app']}")
     if not doctor["compiled"] or Path(doctor["worker_program"]).resolve() != binary:
         raise RuntimeError("Compiled worker launcher does not resolve to the native binary")
     sample = output / "原生子进程.stitchpress"

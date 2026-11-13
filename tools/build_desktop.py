@@ -4,7 +4,10 @@ import argparse
 import platform
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+from stitchpress import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,6 +16,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=("pyinstaller", "nuitka"), default="pyinstaller")
     args = parser.parse_args()
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
+    if declared != __version__:
+        raise SystemExit(f"Version mismatch: project={declared}, runtime={__version__}")
     if platform.system() not in {"Darwin", "Windows"}:
         raise SystemExit("Only macOS/Windows native builds are currently planned")
     host = "macos" if sys.platform == "darwin" else "windows"
