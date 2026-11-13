@@ -328,6 +328,10 @@ def test_stopping_background_copy_keeps_source_and_releases_destination(
     original_id = w.draft.project_id
     target = tmp_path / "取消的另存.stitchpress"
     assert request_save(w, copy_target=target)
+    errors = []
+    monkeypatch.setattr(w, "error", errors.append)
+    assert not w.dirty and not w.confirm_discard()
+    assert errors and "后台保存" in str(errors[-1])
     w.stop_save_worker()
     assert w._save_process is None and not target.exists()
     assert w.draft.project_id == original_id and w.project_path is None

@@ -935,6 +935,9 @@ class Workbench(
             self.error(exc)
 
     def confirm_discard(self):
+        if self._save_process is not None:
+            self.error("作品仍在后台保存，请等待完成后再关闭或切换作品。")
+            return False
         return (
             not self.dirty and not self.has_pending_form() and not self.reference_pending()
         ) or QMessageBox.question(
