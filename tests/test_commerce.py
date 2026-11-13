@@ -34,8 +34,9 @@ def test_classic_spec_accepts_exact_ct_dimensions_without_decimal_overflow():
     try:
         assert renderer.fields["width_cm"] == "2.3586"
         assert renderer.fields["height_cm"] == "3.2657"
-        for target in ("detail-spec", "square-2"):
-            image, _ = renderer.render(target)
+        for target in ("detail-spec", "square-5"):
+            image, checks = renderer.render(target)
+            assert checks["content"] == "spec"
             image.close()
         assert project.entities["fabric"]["sx"] == step
     finally:
