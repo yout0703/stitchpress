@@ -226,6 +226,34 @@ def test_tiny_production_legend_does_not_overlap_measured_ruler(monkeypatch):
     image.close()
 
 
+def test_choosing_source_updates_summary_and_enables_confirmation_immediately(
+    qtbot, tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.show_page(3)
+    assert not w.source_confirm.isEnabled()
+    path = tmp_path / "对应原图.png"
+    Image.new("RGB", (12, 16), "red").save(path)
+    monkeypatch.setattr(
+        "stitchpress.app.desktop.QFileDialog.getOpenFileName", lambda *args: (str(path), "")
+    )
+    w.choose_image()
+    assert "对应原图.png" in w.ref_input_report.text()
+    assert w.source_confirm.isEnabled() and not w.source_confirm.isChecked()
+    w.source_confirm.setChecked(True)
+    assert w.draft.entities["source"]["correspondence_confirmed"]
+    Image.new("RGB", (12, 16), "blue").save(path)
+    w.choose_image()
+    assert not w.source_confirm.isChecked()
+    assert not w.draft.entities["source"]["correspondence_confirmed"]
+    assert w.dirty
+    w.dirty = False
+    w.close()
+
+
 def test_accessibility_edits_update_file_fields_and_correspondence(qtbot):
     w = Workbench()
     qtbot.addWidget(w)

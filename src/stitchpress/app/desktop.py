@@ -1208,7 +1208,12 @@ class Workbench(
         self.source_image = data
         name = f"sources/{sha256(data)}{Path(filename).suffix.lower()}"
         self.draft.assets[name] = data
-        self.draft.entities["source"] = {"asset": name, "role": "unreviewed-input"}
+        self.draft.entities["source"] = {
+            "asset": name,
+            "filename": filename,
+            "role": "unreviewed-input",
+            "correspondence_confirmed": False,
+        }
         try:
             self.display_source(data)
             self.source_label.setText(filename + "\n直接转换仅适合干净蓝图，需人工审核")
@@ -1223,6 +1228,7 @@ class Workbench(
         self.restore_ai_state()
         self.compare_button.setChecked(True)
         self.toggle_source()
+        self.refresh_reference_pages()
 
     def display_source(self, data):
         from PIL import Image
