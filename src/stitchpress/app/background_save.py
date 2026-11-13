@@ -78,7 +78,11 @@ def request_save(owner, *, copy_target=None):
             copy_coordinator = Coordinator(copy_target, captured)
         baseline = captured if copy_target is not None else owner.baseline
         coordinator = copy_coordinator or owner.coordinator
-        changes = {k: v for k, v in captured.entities.items() if v != baseline.entities.get(k)}
+        changes = {
+            k: v
+            for k, v in captured.entities.items()
+            if k not in baseline.entities or v != baseline.entities[k]
+        }
         for key in baseline.entities.keys() - captured.entities.keys():
             changes[key] = None
         if copy_target is None and not changes and captured.assets == baseline.assets:
@@ -89,6 +93,11 @@ def request_save(owner, *, copy_target=None):
         reads = {k: baseline.revision(k) for k in changes}
         prepared = copy.deepcopy(captured)
         prepared.commit_seq = baseline.commit_seq + 1
+        # A None change deletes the entity at commit. Match that exact snapshot,
+        # including drafts created by older versions that retained tombstones.
+        for key, value in changes.items():
+            if value is None:
+                prepared.entities.pop(key, None)
         folder = settings_dir() / "save-work" / uuid4().hex
         folder.mkdir(parents=True)
         snapshot = write_snapshot(prepared, folder)

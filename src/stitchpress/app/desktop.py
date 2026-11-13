@@ -843,7 +843,10 @@ class Workbench(
             previous = self.history.pop()
             self.draft.entities["design"] = previous["design"]
             self.draft.entities["mapping"] = previous["mapping"]
-            self.draft.entities["freeze"] = previous["freeze"]
+            if previous["freeze"] is None:
+                self.draft.entities.pop("freeze", None)
+            else:
+                self.draft.entities["freeze"] = previous["freeze"]
             for key in ("active_conversion", "active_candidate"):
                 if previous.get(key) is None:
                     self.draft.entities.pop(key, None)

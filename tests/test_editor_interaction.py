@@ -34,6 +34,7 @@ def test_real_mouse_click_drag_replace_and_undo(qtbot):
     assert w.design.labels[8][6] == target
     w.undo_patch()
     assert w.design.content_sha == original.content_sha
+    assert "freeze" not in w.draft.entities
     start = w.canvas.mapFromScene(item.dx + 10.2 * 18, item.dy + 12.2 * 18)
     end = w.canvas.mapFromScene(item.dx + 12.8 * 18, item.dy + 14.8 * 18)
     qtbot.mousePress(w.canvas.viewport(), Qt.MouseButton.LeftButton, pos=start)
@@ -229,6 +230,8 @@ def test_background_save_keeps_edits_made_while_compressing(qtbot, tmp_path, mon
     monkeypatch.setattr("stitchpress.app.background_save.settings_dir", lambda: tmp_path)
     w = Workbench()
     qtbot.addWidget(w)
+    errors = []
+    monkeypatch.setattr(w, "error", errors.append)
     project = demo_project()
     project.assets["sources/large.bin"] = b"a" * (9 * 1024**2)
     path = tmp_path / "保存测试.stitchpress"
@@ -236,13 +239,16 @@ def test_background_save_keeps_edits_made_while_compressing(qtbot, tmp_path, mon
     coordinator.commit(expected_seq=0, reads={}, changes={})
     w.set_project(coordinator.project, path, coordinator)
     w.title_edit.setText("第一份保存快照")
+    w.draft.entities["freeze"] = None  # Legacy undo left a deletion marker in the draft.
     assert w.request_save()
     assert w._save_process is not None
     w.title_edit.setText("保存期间继续修改")
     w.apply_fields()
     w.show_page(0)
     qtbot.waitUntil(lambda: w._save_process is None, timeout=30000)
+    assert not errors
     assert Project.decode(path.read_bytes()).entities["metadata"]["title"] == "第一份保存快照"
+    assert "freeze" not in Project.decode(path.read_bytes()).entities
     assert w.draft.entities["metadata"]["title"] == "保存期间继续修改"
     assert w.dirty
     assert w.request_save()
