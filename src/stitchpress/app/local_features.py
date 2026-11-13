@@ -3,7 +3,7 @@
 import copy
 import json
 from dataclasses import asdict
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 from zipfile import ZIP_STORED
@@ -1011,7 +1011,11 @@ class LocalFeatures:
         paths = self.coordinator.versions()
         if not paths:
             return self.statusBar().showMessage("还没有旧提交；后续保存会保留上一个完整版本")
-        labels = [p.stem for p in paths]
+        labels = [
+            f"提交 {p.stem.split('-', 1)[0].lstrip('0') or '0'} · "
+            + datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            for p in paths
+        ]
         chosen, accepted = QInputDialog.getItem(
             self,
             "恢复保存历史",
@@ -1050,6 +1054,11 @@ class LocalFeatures:
                 "commerce",
                 "commerce_targets",
                 "material_rules",
+                "post",
+                "post_review",
+                "pattern_input",
+                "manual_mapping",
+                "mapping_policy",
             )
             current = {k: copy.deepcopy(self.draft.entities.get(k)) for k in active_keys}
             updated = copy.deepcopy(self.draft)
@@ -1066,8 +1075,14 @@ class LocalFeatures:
                 "before": current,
             }
             # Validation completes before adopting anything; do not release the active writer.
-            Project.decode(updated.encode())
+            # encode already performs a full read-back. This is validation only;
+            # compressing a large customer library here blocks the desktop.
+            updated.encode(compression=ZIP_STORED)
             self.draft = updated
+            self.reference_project = None
+            self._reference_path = None
+            for panel in getattr(self, "reference_panels", ()):
+                panel.project_id = None
             self.source_image = None
             self.source_canvas.scene().clear()
             self.source_canvas.hide()

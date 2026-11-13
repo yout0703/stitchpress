@@ -407,3 +407,65 @@ def test_settings_export_is_background_snapshot_and_keeps_later_edits(qtbot, tmp
     assert not list((tmp_path / "settings-work").glob("*/snapshot.json"))
     w.dirty = False
     w.close()
+
+
+def test_history_restores_reference_state_and_discards_pending_forms(qtbot, tmp_path, monkeypatch):
+    from dataclasses import asdict
+
+    from stitchpress.app.reference_actions import import_pattern
+    from stitchpress.app.store import Coordinator
+    from stitchpress.core.post import PostSettings, ThreadPlan
+
+    old = import_pattern(demo_project(), "fixtures/s01-independent.xsd")
+    old.entities["post"] = PostSettings(
+        thread_plans=(asdict(ThreadPlan("9", "180", "old QA only", True)),)
+    ).to_dict()
+    old.entities["manual_mapping"] = {"bindings": {}}
+    old.entities["pattern_input"]["filename"] = "old-source.xsd"
+    path = tmp_path / "保存历史.stitchpress"
+    writer = Coordinator(path, old)
+    writer.commit(expected_seq=0, reads={}, changes={})
+    changed = {
+        "post": PostSettings(
+            thread_plans=(asdict(ThreadPlan("14", "240", "new QA only", True)),)
+        ).to_dict(),
+        "pattern_input": {**old.entities["pattern_input"], "filename": "new-source.xsd"},
+        "manual_mapping": {"bindings": old.entities["mapping"].copy()},
+    }
+    writer.commit(
+        expected_seq=1,
+        reads={k: writer.project.revision(k) for k in changed},
+        changes=changed,
+    )
+    original = path.read_bytes()
+    w = Workbench()
+    qtbot.addWidget(w)
+    w.set_project(writer.project, path, writer)
+    w.jpeg_quality.setValue(80)  # Accepted discard must also replace unsaved form state.
+    assert w.reference_pending()
+    monkeypatch.setattr(w, "confirm_discard", lambda: True)
+    labels_seen = []
+
+    def choose(*args):
+        labels_seen.extend(args[3])
+        return args[3][0], True
+
+    monkeypatch.setattr("stitchpress.app.local_features.QInputDialog.getItem", choose)
+    encode = Project.encode
+
+    def validation_without_compression(self, *, compression):
+        assert compression == ZIP_STORED
+        return encode(self, compression=compression)
+
+    monkeypatch.setattr(Project, "encode", validation_without_compression)
+    w.restore_version()
+    assert labels_seen[0].startswith("提交 1 · ")
+    for key in ("post", "pattern_input", "manual_mapping"):
+        assert digest(w.draft.entities[key]) == digest(old.entities[key])
+    assert w.thread_table.item(0, 0).text() == "9"
+    assert w.jpeg_quality.value() == PostSettings().jpeg_quality
+    assert not w.reference_pending()
+    assert w.dirty and w.coordinator is writer
+    assert w.baseline.commit_seq == 2 and path.read_bytes() == original
+    w.dirty = False
+    w.close()
