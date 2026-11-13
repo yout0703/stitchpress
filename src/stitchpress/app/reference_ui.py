@@ -908,7 +908,10 @@ class ReferenceFeatures:
     def apply_thread_rows(self):
         try:
             options = PostSettings(
-                **{**self.draft.entities.get("post", {}), "thread_plans": self.thread_values()}
+                **{
+                    **self.draft.entities.get("post", {}),
+                    "thread_plans": tuple(self.thread_values()),
+                }
             )
             self.draft.entities["post"] = options.to_dict()
             self._thread_baseline = self.thread_values()

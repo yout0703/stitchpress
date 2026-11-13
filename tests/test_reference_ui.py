@@ -88,6 +88,8 @@ def test_thread_text_commerce_pages_save_independent_state(qtbot, monkeypatch):
     )
     w.apply_thread_rows()
     assert len(w.draft.entities["post"]["thread_plans"]) == 1
+    assert not w.reference_pending() and not w._post_or_threads_pending()
+    assert w.check_save_forms() and not errors
     w.post_targets["threads"].setChecked(True)
     w.apply_post_options()
     d = w.text_panel.editor
