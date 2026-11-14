@@ -43,7 +43,7 @@ from stitchpress.core.configuration import (
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256
 from stitchpress.core.importers import export_oxs, import_oxs
-from stitchpress.core.layout import Fabric
+from stitchpress.core.layout import CT_PITCHES_CM, Fabric
 from stitchpress.core.masks import annotation_masks
 from stitchpress.core.resources import load_font
 from stitchpress.platform.files import atomic_write
@@ -117,13 +117,19 @@ class SpecificationDialog(QDialog):
         line.addStretch()
         form.addRow("名义布号 CT", line)
         quick = QHBoxLayout()
-        for ct in (11, 14, 16, 18):
+        self.ct_buttons = {}
+        for ct, pitch in CT_PITCHES_CM.items():
             button = QPushButton(f"{ct} CT")
-            button.setToolTip("使用理论格距，不改变针数与留白")
+            button.setToolTip(f"使用客户格距 {pitch} cm/格计算尺寸，不改变针数")
             button.clicked.connect(lambda _, value=ct: self.choose_ct(value))
             quick.addWidget(button)
+            self.ct_buttons[ct] = button
         quick.addStretch()
         form.addRow("常用布号", quick)
+        ct_note = QLabel("常用布号采用客户提供的格距；横纵实际格距也可分别调整。")
+        ct_note.setWordWrap(True)
+        ct_note.setProperty("role", "muted")
+        form.addRow(ct_note)
         self.fabric_fields["nominal_ct"].setAccessibleName("名义布号 CT")
         self.target_width = QLineEdit()
         self.target_width.setMaximumWidth(180)
@@ -470,7 +476,7 @@ class SpecificationDialog(QDialog):
 
     def theoretical(self):
         try:
-            theoretical = Fabric.theoretical(self.fabric_fields["nominal_ct"].text())
+            theoretical = Fabric.from_ct(self.fabric_fields["nominal_ct"].text())
             for key in ("sx", "sy"):
                 self.fabric_fields[key].setText(getattr(theoretical, key))
                 self.fabric_fields[key].setCursorPosition(0)

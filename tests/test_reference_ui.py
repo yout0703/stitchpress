@@ -477,7 +477,7 @@ def test_cloth_preview_tracks_units_and_invalid_values_without_mutating_project(
     original = dict(w.draft.entities["fabric"])
     editor.choose_ct(14)
     pitch = Decimal(editor.fabric_fields["sx"].text())
-    assert pitch == Decimal("2.54") / 14
+    assert pitch == Decimal("0.181429")  # Customer's six-decimal CT table.
     assert editor.fabric_preview.plan is not None
     editor.margin_unit.setCurrentIndex(editor.margin_unit.findData("mm"))
     assert Decimal(editor.fabric_fields["left"].text()) == Decimal(original["left"]) * 10

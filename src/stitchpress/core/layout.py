@@ -4,6 +4,15 @@ from math import ceil
 
 from .errors import StitchPressError
 
+# Explicit customer table; keep the supplied decimal precision in saved specifications.
+CT_PITCHES_CM = {
+    "9": "0.282222",
+    "11": "0.230909",
+    "14": "0.181429",
+    "16": "0.158750",
+    "18": "0.141111",
+}
+
 
 def decimal(value: str) -> Decimal:
     try:
@@ -46,6 +55,19 @@ class Fabric:
     def theoretical(cls, ct: str) -> "Fabric":
         pitch = Decimal("2.54") / decimal(ct) if decimal(ct) > 0 else Decimal(0)
         return cls(sx=str(pitch), sy=str(pitch), nominal_ct=ct, source="theoretical-ct")
+
+    @classmethod
+    def from_ct(cls, ct: str) -> "Fabric":
+        value = decimal(ct)
+        for key, pitch in CT_PITCHES_CM.items():
+            if value == Decimal(key):
+                return cls(
+                    sx=pitch,
+                    sy=pitch,
+                    nominal_ct=key,
+                    source="customer-ct-pitches-2026-11-14",
+                )
+        return cls.theoretical(ct)
 
 
 @dataclass(frozen=True)

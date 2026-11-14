@@ -19,6 +19,7 @@ from stitchpress.app.store import Project
 from stitchpress.core.commerce import FRAMES, SCENES, TARGETS, CommerceSettings
 from stitchpress.core.configuration import ReferenceSettings
 from stitchpress.core.identity import canonical_bytes, digest, sha256_file
+from stitchpress.core.layout import Fabric
 from stitchpress.core.models import Design
 from stitchpress.core.post import POST_TARGETS, PostSettings, ThreadPlan
 
@@ -45,6 +46,7 @@ def main():
     )
     # A clean Windows machine must render Chinese without any installed CJK font.
     project.entities["metadata"] = dict(title="中文花园 · Independent fixture", code="客户0026")
+    project.entities["fabric"] = asdict(Fabric.from_ct("9"))
     design = Design.from_dict(project.entities["design"])
     source = Image.new("RGB", (80, 60), "white")
     from PIL import ImageDraw
@@ -122,6 +124,7 @@ def main():
 
     plan = worker("plan", "post-plan")
     assert plan["stitches"] == 6 and plan["reference_dpi"] == 150 and plan["production_dpi"] == 300
+    assert plan["artwork_cm"] == ["1.128888", "0.846666"]  # 4×3 cells at 9 CT.
     previews = []
     for target in ("production", "whole", "pages", "symbols", "card", "effect", *TARGETS):
         result = worker("preview-" + target, "post-preview", target=target, page_number=1)
@@ -181,6 +184,7 @@ def main():
     restored = load_settings(settings)
     assert Design.from_dict(restored.entities["design"]).content_sha == design.content_sha
     assert restored.entities["mapping"] == project.entities["mapping"]
+    assert restored.entities["fabric"] == project.entities["fabric"]
     assert sha256_file(input_path) == original_sha
     summary = dict(
         binary_sha=sha256_file(binary),
