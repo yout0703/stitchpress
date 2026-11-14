@@ -9,8 +9,10 @@ from pathlib import Path
 from PIL import Image, ImageCms, ImageDraw, ImageFont
 
 from .errors import ResourceError, StitchPressError
-from .identity import digest, sha256, symbol_key
+from .identity import canonical_bytes, digest, sha256, symbol_key
 from .models import Design, ThreadColor
+
+_BUNDLED_LIBRARY_STATE = None
 
 
 def bundled_font() -> Path:
@@ -248,9 +250,13 @@ def _read_builtin_library(path: Path) -> SymbolLibrary:
 @lru_cache(maxsize=1)
 def builtin_library() -> SymbolLibrary:
     """User-authorized customer colors, cached once; no developer-path dependencies."""
-    return _read_builtin_library(
+    global _BUNDLED_LIBRARY_STATE
+    library = _read_builtin_library(
         Path(__file__).parents[1] / "resources" / "symbols" / "customer-152.tar.xz"
     )
+    record, assets = library_assets(library)
+    _BUNDLED_LIBRARY_STATE = (library, canonical_bytes(record), assets)
+    return library
 
 
 def load_catalog(data: bytes, brand: str = "DMC") -> tuple[ThreadColor, ...]:
@@ -417,6 +423,14 @@ def library_assets(library: SymbolLibrary) -> tuple[dict, dict[str, bytes]]:
 
 
 def library_from_assets(record: dict, assets: dict[str, bytes]) -> SymbolLibrary:
+    # Share only already-validated, immutable shipped bytes. A decoded project or
+    # replaced asset has different identities and still takes the full validation path.
+    if _BUNDLED_LIBRARY_STATE is not None:
+        library, bundled_record, bundled_assets = _BUNDLED_LIBRARY_STATE
+        if canonical_bytes(record) == bundled_record and all(
+            assets.get(name) is raw for name, raw in bundled_assets.items()
+        ):
+            return library
     return SymbolLibrary(
         record["revision"],
         tuple(

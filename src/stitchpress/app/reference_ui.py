@@ -810,12 +810,13 @@ class ReferenceFeatures:
             raise StitchPressError("已定位到未应用的设置；请应用更改后再继续。")
         return True
 
-    def refresh_reference_pages(self):
+    def refresh_reference_pages(self, design=None):
         if not hasattr(self, "reference_nav"):
             return
-        if getattr(self, "_overview_sha", None) != self.design.content_sha:
-            self.work_overview.set_design(self.design, fit=True)
-            self._overview_sha = self.design.content_sha
+        design = design or self.design
+        if getattr(self, "_overview_sha", None) != design.content_sha:
+            self.work_overview.set_design(design, fit=True)
+            self._overview_sha = design.content_sha
         metadata = self.draft.entities["metadata"]
         for field, key in ((self.ref_title, "title"), (self.ref_code, "code")):
             if not field.hasFocus():
@@ -831,8 +832,8 @@ class ReferenceFeatures:
             f"原图  {source.get('filename', source.get('asset', '尚未添加'))}"
         )
         self.ref_dimensions.setText(
-            f"{self.design.width} × {self.design.height} 格    "
-            f"{sum(self.design.counts):,} 针    {sum(n > 0 for n in self.design.counts)} 色"
+            f"{design.width} × {design.height} 格    "
+            f"{sum(design.counts):,} 针    {sum(n > 0 for n in design.counts)} 色"
         )
         self.ref_source_details.setText(f"原稿 SHA256：{record.get('sha256', '尚无记录')}")
         for panel in self.reference_panels:
@@ -855,7 +856,7 @@ class ReferenceFeatures:
             self._thread_baseline = self.thread_values()
             self._post_baseline = self.post_values().to_dict()
         self.reference_project = self.draft.project_id
-        self.refresh_reference_symbols()
+        self.refresh_reference_symbols(design)
         self.update_pending_navigation()
         current = post_fingerprint(self.draft)
         if getattr(self, "_post_plan_sha", None) != current:
@@ -959,7 +960,7 @@ class ReferenceFeatures:
             self.set_project(updated)
             self.dirty = True
             self._reference_path = Path(path)
-            self.refresh()
+            self.update_document_state()
             format_name = updated.entities["pattern_input"]["format"].upper()
             self.statusBar().showMessage(
                 f"全针 {format_name} 已导入，原件与旧修订已留底；请确认货号及对应图"
@@ -1072,11 +1073,12 @@ class ReferenceFeatures:
         except Exception as exc:
             self.error(exc)
 
-    def refresh_reference_symbols(self):
+    def refresh_reference_symbols(self, design=None):
+        design = design or self.design
         library = self.symbol_library()
         mapping = self.draft.entities["mapping"]
         manual = self.draft.entities.get("manual_mapping", {}).get("bindings", {})
-        token = digest([self.symbol_artwork.token, mapping, manual, self.design.content_sha])
+        token = digest([self.symbol_artwork.token, mapping, manual, design.content_sha])
         if token == getattr(self, "_symbol_page_sha", None):
             return
         self._symbol_page_sha = token
@@ -1102,9 +1104,9 @@ class ReferenceFeatures:
                 self.ref_symbols.setCurrentItem(item)
         self.ref_mapping.setRowCount(0)
         for index in sorted(
-            range(len(self.design.palette)), key=lambda i: natural_color_key(self.design.palette[i])
+            range(len(design.palette)), key=lambda i: natural_color_key(design.palette[i])
         ):
-            color, count = self.design.palette[index], self.design.counts[index]
+            color, count = design.palette[index], design.counts[index]
             if not count:
                 continue
             row_number = self.ref_mapping.rowCount()

@@ -12,6 +12,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
     sub.add_parser("gui")
+    benchmark = sub.add_parser("import-benchmark", help="本地导入与界面性能诊断，不生成生产文件")
+    benchmark.add_argument("pattern", type=Path)
     sub.add_parser("license-status", help="查看试用授权状态")
     request = sub.add_parser("license-request", help="导出离线机器码请求，不开始试用")
     request.add_argument("output", type=Path)
@@ -123,7 +125,7 @@ def execute(args):
         import sys
 
         from PIL import features
-        from PySide6.QtCore import qVersion
+        from PySide6.QtCore import QLibraryInfo, qVersion
 
         from . import _edition
         from .core.identity import sha256
@@ -143,6 +145,10 @@ def execute(args):
             "runtime_executable": sys.executable,
             "worker_program": worker_program(),
             "edition": _edition.EDITION,
+            "qt_chinese_translation_available": (
+                Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath))
+                / "qtbase_zh_CN.qm"
+            ).is_file(),
             "builtin_symbol_library": {
                 "name": library.name,
                 "symbols": len(library.symbols),
@@ -150,6 +156,10 @@ def execute(args):
                 "icc_sha": sha256(library.icc),
             },
         }
+    elif args.command == "import-benchmark":
+        from .app.fixtures import benchmark_import
+
+        data = benchmark_import(args.pattern)
     elif args.command == "reference-export":
         from dataclasses import replace
 

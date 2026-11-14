@@ -15,6 +15,44 @@ from stitchpress import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# QWidget/QGraphicsView use raster painting, not QML or the optional Python GL widgets.
+# Keep QtGui's DLL dependencies and software OpenGL fallback; only exclude unused modules.
+UNUSED_MODULES = (
+    "tkinter",
+    "PIL.ImageTk",
+    "PIL.AvifImagePlugin",
+    "PIL._avif",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickWidgets",
+    "PySide6.QtOpenGL",
+    "PySide6.QtOpenGLWidgets",
+)
+
+
+def trim_and_measure(output):
+    removed = []
+    # macOS resources are already sealed by PyInstaller's code signature.
+    for path in output.rglob("*.qm") if sys.platform == "win32" else ():
+        if "PySide6" in path.parts and "translations" in path.parts:
+            if path.name != "qtbase_zh_CN.qm":
+                removed.append(
+                    dict(path=path.relative_to(output).as_posix(), bytes=path.stat().st_size)
+                )
+                path.unlink()
+    files = [path for path in output.rglob("*") if path.is_file() and path.suffix != ".log"]
+    report = dict(
+        files=len(files),
+        bytes=sum(path.stat().st_size for path in files),
+        removed_translations=removed,
+        excluded_modules=UNUSED_MODULES,
+        largest=[
+            dict(path=path.relative_to(output).as_posix(), bytes=path.stat().st_size)
+            for path in sorted(files, key=lambda p: -p.stat().st_size)[:20]
+        ],
+    )
+    (output / "bundle-footprint.json").write_text(json.dumps(report, indent=2), "utf-8")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -139,6 +177,7 @@ def main():
             command += ["--osx-bundle-identifier=com.stitchpress.desktop"]
         if protection:
             command += [f"--hidden-import={name}" for name in protection["hidden_imports"]]
+        command += [f"--exclude-module={name}" for name in UNUSED_MODULES]
         command += ["tools/StitchPress.py"]
     environment = dict(os.environ)
     if protection:
@@ -148,6 +187,8 @@ def main():
             command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, env=environment
         )
     print(f"exit_code={result.returncode}; log={output / 'build.log'}")
+    if result.returncode == 0:
+        trim_and_measure(output)
     if result.returncode == 0 and protection:
         executable = (
             output / "StitchPress.app/Contents/MacOS/StitchPress"

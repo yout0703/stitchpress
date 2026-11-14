@@ -5,7 +5,6 @@ import json
 import re
 from pathlib import Path
 from uuid import uuid4
-from zipfile import ZIP_STORED
 
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import digest, sha256
@@ -64,7 +63,7 @@ def import_pattern(project, path):
             "title": report.get("title", "").strip() or path.stem,
             "code": path.stem,
         }
-    updated.encode(compression=ZIP_STORED)
+    updated.validate_contents()
     return updated
 
 

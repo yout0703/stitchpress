@@ -59,6 +59,8 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item -Recurse dist/windows/StitchPress "dist/windows/绣印工坊测试"
+          uv run --all-groups python tools/benchmark_import_bundle.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/import-performance.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --all-groups python tools/smoke_bundle.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/smoke
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --all-groups python tools/validate_bundle_revisions.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/revisions
@@ -88,10 +90,12 @@ jobs:
           path: |
             reports/local/windows/
             dist/windows/build.log
+            dist/windows/bundle-footprint.json
             dist/windows-trial/build.log
             dist/windows-trial/protection-build.log
             dist/windows-trial/protection.json
             dist/windows-trial/protection-audit.json
+            dist/windows-trial/bundle-footprint.json
           retention-days: 30
           if-no-files-found: warn
       - name: Retain unsigned local test application

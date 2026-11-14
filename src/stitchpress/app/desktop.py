@@ -637,7 +637,7 @@ class Workbench(
             self.refresh_palette(design, library, mapping, selected_index)
         finally:
             self._refreshing = False
-        self.refresh_reference_pages()
+        self.refresh_reference_pages(design)
 
     def refresh_palette(self, design, library, mapping, selected_index):
         palette_token = (design.content_sha, self.symbol_artwork.token, tuple(mapping.items()))
@@ -959,7 +959,7 @@ class Workbench(
     def set_project(self, project, path=None, coordinator=None):
         design = Design.from_dict(project.entities["design"])
         Fabric(**project.entities["fabric"])
-        library = library_from_assets(project.entities["library"], project.assets)
+        library = self.symbol_artwork.library(project)
         assign_symbols(design, library, project.entities.get("mapping"))
         if any(
             not isinstance(project.entities.get("metadata", {}).get(k), str)

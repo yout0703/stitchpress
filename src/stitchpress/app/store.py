@@ -78,16 +78,30 @@ class Project:
             updated.source_schema = PROJECT_SCHEMA
         return updated
 
-    def encode(self, *, compression=ZIP_DEFLATED) -> bytes:
-        if self.source_schema < PROJECT_SCHEMA:
-            return self.upgraded_copy().encode(compression=compression)
+    def validate_contents(self):
+        """Check an in-memory draft without manufacturing a throwaway ZIP container."""
         from .validation import validate_entities
 
         validate_entities(self.entities, self.assets)
-        for name in self.assets:
+        if len(self.assets) + 1 > MAX_PROJECT_FILES:
+            raise StitchPressError("作品文件数量/解压大小超限")
+        seen, total = {"manifest.json"}, 0
+        for name, data in self.assets.items():
             _safe_member(name)
-            if name == "manifest.json":
-                raise StitchPressError("资源路径与作品清单冲突")
+            key = unicodedata.normalize("NFC", name).casefold()
+            if key in seen:
+                raise StitchPressError("资源路径重复或与作品清单冲突")
+            seen.add(key)
+            if not isinstance(data, bytes):
+                raise StitchPressError("作品资源必须为不可变字节")
+            total += len(data)
+        if total > MAX_PROJECT_BYTES:
+            raise StitchPressError("作品文件数量/解压大小超限")
+
+    def encode(self, *, compression=ZIP_DEFLATED) -> bytes:
+        if self.source_schema < PROJECT_SCHEMA:
+            return self.upgraded_copy().encode(compression=compression)
+        self.validate_contents()
         manifest = {
             "schema_version": PROJECT_SCHEMA,
             "project_id": self.project_id,
@@ -236,7 +250,7 @@ class Coordinator:
             )
             if self.project is None:
                 raise StitchPressError("新作品缺少初始数据")
-            self._disk_sha = sha256(path.read_bytes()) if path.exists() else None
+            self._disk_sha = self.project.source_container_sha if path.exists() else None
         except BaseException:
             self._lock.__exit__(None, None, None)
             raise
