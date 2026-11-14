@@ -6,7 +6,8 @@ from PIL import Image, ImageCms
 
 from .conversion import normalize_image
 from .errors import StitchPressError
-from .identity import digest, sha256
+from .identity import digest, image_pixel_sha, sha256
+from .limits import MAX_NORMALIZED_BYTES, MAX_SOURCE_BYTES, MAX_SOURCE_PIXELS
 
 ORIGINS = {
     "local-import": "外部文件（来源由你核对）",
@@ -20,7 +21,7 @@ ORIGINS = {
 def prepare_blueprint(data, *, origin, note="", provider="", model="", parent_sha=None):
     if (
         origin not in ORIGINS
-        or len(data) > 64 * 1024**2
+        or len(data) > MAX_SOURCE_BYTES
         or any(not isinstance(v, str) or len(v) > 8000 for v in (note, provider, model))
     ):
         raise StitchPressError("蓝图来源、文字或资源大小无效")
@@ -47,8 +48,8 @@ def prepare_blueprint(data, *, origin, note="", provider="", model="", parent_sh
     }
     normalized.close()
     record["revision"] = digest(record)
-    if len(payload) > 64 * 1024**2:
-        raise StitchPressError("规范蓝图超过64MiB作品资源上限，不能静默降质")
+    if len(payload) > MAX_NORMALIZED_BYTES:
+        raise StitchPressError("规范蓝图超过256MiB作品资源上限，不能静默降质")
     return payload, record
 
 
@@ -60,14 +61,14 @@ def check_blueprint(record, assets):
         if path not in assets or sha256(assets[path]) != record.get(field + "_sha"):
             raise StitchPressError("蓝图原件/规范输入SHA核对失败")
     with Image.open(io.BytesIO(assets[record["normalized_asset"]])) as image:
-        if image.width * image.height > 40_000_000:
+        if image.width * image.height > MAX_SOURCE_PIXELS:
             raise StitchPressError("规范蓝图超出像素上限")
         image.load()
         if (
             image.format != "PNG"
             or image.mode != "RGBA"
             or list(image.size) != record.get("normalized_size")
-            or sha256(image.tobytes()) != record.get("color", {}).get("normalized_pixel_sha")
+            or image_pixel_sha(image) != record.get("color", {}).get("normalized_pixel_sha")
         ):
             raise StitchPressError("规范蓝图尺寸/模式/像素与来源记录不一致")
     if record.get("edited_asset"):

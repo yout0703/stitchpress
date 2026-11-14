@@ -7,7 +7,8 @@ from PIL import Image, ImageCms, ImageOps
 from stitchpress import __version__
 
 from .errors import StitchPressError
-from .identity import digest, sha256
+from .identity import digest, image_pixel_sha, sha256
+from .limits import MAX_SOURCE_BYTES, MAX_SOURCE_PIXELS
 from .models import MAX_CELLS, ThreadColor, new_design
 
 
@@ -39,11 +40,13 @@ class ConversionOptions:
 
 
 def normalize_image(data: bytes, override_icc: bytes | None = None) -> tuple[Image.Image, dict]:
+    if len(data) > MAX_SOURCE_BYTES:
+        raise StitchPressError("原图文件超过128MiB上限")
     with Image.open(io.BytesIO(data)) as source:
         if getattr(source, "n_frames", 1) != 1:
             raise StitchPressError("当前蓝图仅支持单帧图像")
-        if source.width * source.height > 40_000_000:
-            raise StitchPressError("蓝图超过4000万像素试验上限")
+        if source.width * source.height > MAX_SOURCE_PIXELS:
+            raise StitchPressError(f"原图{source.width:,}×{source.height:,}像素，超过1亿像素上限")
         source.load()
         orientation = source.getexif().get(274, 1)
         im = ImageOps.exif_transpose(source)
@@ -72,20 +75,46 @@ def normalize_image(data: bytes, override_icc: bytes | None = None) -> tuple[Ima
             assumption = "untagged RGB/gray explicitly interpreted as sRGB"
         else:
             raise StitchPressError("无ICC的CMYK/特殊色彩输入不能猜测转换，请导入输入ICC")
-        rgba = np.array(rgb.convert("RGBA"))
-        rgba[:, :, 3] = np.asarray(alpha)
-        rgba[rgba[:, :, 3] == 0, :3] = 0
-        result = Image.fromarray(rgba)
+        result = rgb.convert("RGBA")
+        result.putalpha(alpha)
+        # Avoid several full-resolution NumPy/RGBA copies for large source images.
+        transparent = alpha.point(lambda value: 255 if value == 0 else 0)
+        result.paste((0, 0, 0, 0), mask=transparent)
+        transparent.close()
         return result, {
             "source_sha": sha256(data),
             "source_icc_sha": sha256(icc) if icc else None,
             "assumption": assumption,
             "orientation_applied": orientation,
-            "normalized_pixel_sha": sha256(result.tobytes()),
+            "normalized_pixel_sha": image_pixel_sha(result),
             "normalized_size": result.size,
             "working_space": "sRGB",
             "intent": "relative-colorimetric",
         }
+
+
+def source_preview(data, override_icc=None, *, max_edge=2048):
+    """Decode/thumbnail before color normalization; never used as a production master."""
+    if len(data) > MAX_SOURCE_BYTES:
+        raise StitchPressError("原图文件超过128MiB上限")
+    with Image.open(io.BytesIO(data)) as source:
+        if getattr(source, "n_frames", 1) != 1 or source.width * source.height > MAX_SOURCE_PIXELS:
+            raise StitchPressError("原图须为单帧且不超过1亿像素")
+        icc = override_icc or source.info.get("icc_profile")
+        # JPEG can downsample in its decoder, instead of allocating the full raster.
+        source.draft(source.mode, (max_edge, max_edge))
+        source.thumbnail((max_edge, max_edge))
+        preview = ImageOps.exif_transpose(source)
+        stream = io.BytesIO()
+        preview.save(stream, "TIFF" if preview.mode == "CMYK" else "PNG", icc_profile=icc)
+        preview.close()
+    normalized, _ = normalize_image(stream.getvalue(), icc)
+    white = Image.new("RGBA", normalized.size, "white")
+    white.alpha_composite(normalized)
+    normalized.close()
+    rgb = white.convert("RGB")
+    white.close()
+    return rgb
 
 
 def _nearest(pixels: np.ndarray, palette: np.ndarray) -> np.ndarray:

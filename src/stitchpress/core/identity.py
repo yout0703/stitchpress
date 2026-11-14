@@ -19,6 +19,15 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def image_pixel_sha(image):
+    result = hashlib.sha256()
+    for top in range(0, image.height, 128):
+        band = image.crop((0, top, image.width, min(image.height, top + 128)))
+        result.update(band.tobytes())
+        band.close()
+    return result.hexdigest()
+
+
 def sha256_file(path) -> str:
     result = hashlib.sha256()
     with open(path, "rb") as source:

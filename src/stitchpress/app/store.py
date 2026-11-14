@@ -6,15 +6,16 @@ import stat
 import threading
 import unicodedata
 from dataclasses import dataclass
+from hashlib import sha256 as new_sha256
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from stitchpress.core.errors import ConflictError, StitchPressError
-from stitchpress.core.identity import canonical_bytes, digest, sha256
-from stitchpress.platform.files import atomic_write, exclusive_lock
+from stitchpress.core.identity import canonical_bytes, digest, sha256, sha256_file
+from stitchpress.core.limits import MAX_MANIFEST_BYTES, MAX_PROJECT_BYTES
+from stitchpress.platform.files import atomic_copy, atomic_write, exclusive_lock
 
-MAX_PROJECT_BYTES = 256 * 1024 * 1024
 MAX_PROJECT_FILES = 2048
 PROJECT_SCHEMA = 2
 
@@ -82,6 +83,16 @@ class Project:
         """Check an in-memory draft without manufacturing a throwaway ZIP container."""
         from .validation import validate_entities
 
+        if (
+            not isinstance(self.project_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", self.project_id)
+            or type(self.commit_seq) is not int
+            or self.commit_seq < 0
+            or not isinstance(self.events, list)
+            or not all(isinstance(event, str) and event for event in self.events)
+            or len(set(self.events)) != len(self.events)
+        ):
+            raise StitchPressError("作品身份、提交序列或事件记录无效")
         validate_entities(self.entities, self.assets)
         if len(self.assets) + 1 > MAX_PROJECT_FILES:
             raise StitchPressError("作品文件数量/解压大小超限")
@@ -102,7 +113,21 @@ class Project:
         if self.source_schema < PROJECT_SCHEMA:
             return self.upgraded_copy().encode(compression=compression)
         self.validate_contents()
-        manifest = {
+        manifest = self.manifest()
+        manifest_bytes = canonical_bytes(manifest)
+        if len(manifest_bytes) > MAX_MANIFEST_BYTES:
+            raise StitchPressError("作品清单超过128MiB上限")
+        output = io.BytesIO()
+        with ZipFile(output, "w", compression) as archive:
+            archive.writestr("manifest.json", manifest_bytes)
+            for name, data in sorted(self.assets.items()):
+                archive.writestr(name, data)
+        payload = output.getvalue()
+        self.verify_encoded(payload)
+        return payload
+
+    def manifest(self):
+        return {
             "schema_version": PROJECT_SCHEMA,
             "project_id": self.project_id,
             "commit_seq": self.commit_seq,
@@ -110,20 +135,44 @@ class Project:
             "events": self.events,
             "assets": {n: sha256(b) for n, b in self.assets.items()},
         }
-        output = io.BytesIO()
-        with ZipFile(output, "w", compression) as archive:
-            archive.writestr("manifest.json", canonical_bytes(manifest))
-            for name, data in sorted(self.assets.items()):
-                archive.writestr(name, data)
-        payload = output.getvalue()
-        # Apply the same portability validation before save, not just on reopen.
-        self.decode(payload)
-        return payload
+
+    def verify_encoded(self, payload):
+        """Verify exact metadata, every asset SHA and CRC without a duplicate Project."""
+        if len(payload) > MAX_PROJECT_BYTES:
+            raise StitchPressError("作品压缩容器超过1GiB上限")
+        expected = self.manifest()
+        with ZipFile(io.BytesIO(payload)) as archive:
+            infos = archive.infolist()
+            if (
+                len(infos) > MAX_PROJECT_FILES
+                or sum(i.file_size for i in infos) > MAX_PROJECT_BYTES
+            ):
+                raise StitchPressError("作品解压内容超过1GiB上限")
+            if len({i.filename for i in infos}) != len(infos) or {i.filename for i in infos} != {
+                "manifest.json",
+                *self.assets,
+            }:
+                raise ConflictError("后台作品资源清单与保存快照不符")
+            for info in infos:
+                _safe_member(info.filename)
+                if stat.S_ISLNK(info.external_attr >> 16) or info.is_dir():
+                    raise StitchPressError("作品含链接或目录记录")
+            if archive.getinfo("manifest.json").file_size > MAX_MANIFEST_BYTES or (
+                archive.read("manifest.json") != canonical_bytes(expected)
+            ):
+                raise ConflictError("后台作品清单与保存快照不符")
+            for name, checksum in expected["assets"].items():
+                actual = new_sha256()
+                with archive.open(name) as stream:
+                    for chunk in iter(lambda: stream.read(1024**2), b""):
+                        actual.update(chunk)
+                if actual.hexdigest() != checksum:
+                    raise ConflictError(f"后台保存资源SHA不符：{name}")
 
     @classmethod
     def decode(cls, data: bytes) -> "Project":
         if len(data) > MAX_PROJECT_BYTES:
-            raise StitchPressError("作品容器超过试验版256MiB上限")
+            raise StitchPressError(f"作品容器{len(data) / 1024**2:.1f}MiB，超过1GiB上限")
         try:
             with ZipFile(io.BytesIO(data)) as archive:
                 infos = archive.infolist()
@@ -139,6 +188,8 @@ class Project:
                     if key in seen or stat.S_ISLNK(info.external_attr >> 16) or info.is_dir():
                         raise StitchPressError("作品含重复/大小写冲突/链接/目录记录")
                     seen.add(key)
+                if archive.getinfo("manifest.json").file_size > MAX_MANIFEST_BYTES:
+                    raise StitchPressError("作品清单超过128MiB上限")
                 manifest = json.loads(archive.read("manifest.json"))
                 required = {
                     "schema_version",
@@ -236,6 +287,25 @@ def migrate_project(source: Path, target: Path):
 
 
 class Coordinator:
+    @classmethod
+    def from_loaded(cls, path, project):
+        """Adopt a validated worker snapshot only while its source still matches."""
+        if not project.source_container_sha:
+            raise ConflictError("打开快照缺少原文件校验值")
+        owner = cls.__new__(cls)
+        owner.path = Path(path).resolve()
+        owner._mutex = threading.RLock()
+        owner._lock = exclusive_lock(owner.path.with_suffix(owner.path.suffix + ".lock"))
+        owner._lock.__enter__()
+        try:
+            if sha256_file(owner.path) != project.source_container_sha:
+                raise ConflictError("作品在后台打开期间被修改，请重新打开；当前草稿未替换")
+            owner.project, owner._disk_sha = project, project.source_container_sha
+            return owner
+        except BaseException:
+            owner._lock.__exit__(None, None, None)
+            raise
+
     """UI and worker results submit commands here, never replace an old project snapshot."""
 
     def __init__(self, path: Path, project: Project | None = None):
@@ -280,7 +350,7 @@ class Coordinator:
                 raise ConflictError("旧格式作品只读保留；请另存新格式副本，不能原地覆盖迁移")
             if type(expected_seq) is not int or expected_seq < 0:
                 raise ConflictError("提交序列须为非负整数")
-            disk_sha = sha256(self.path.read_bytes()) if self.path.exists() else None
+            disk_sha = sha256_file(self.path) if self.path.exists() else None
             if disk_sha != self._disk_sha:
                 raise ConflictError("作品被外部修改，已停止写回；请另存当前草稿")
             if event_id and event_id in self.project.events:
@@ -309,27 +379,18 @@ class Coordinator:
             if prepared_payload is None:
                 payload = updated.encode()
             else:
-                prepared = Project.decode(prepared_payload)
-                if (
-                    prepared.project_id != updated.project_id
-                    or prepared.source_schema != PROJECT_SCHEMA
-                    or prepared.commit_seq != updated.commit_seq
-                    or prepared.events != updated.events
-                    or digest(prepared.entities) != digest(updated.entities)
-                    or prepared.assets != updated.assets
-                ):
-                    raise ConflictError("后台保存快照与本次提交不符；草稿未丢弃")
+                updated.validate_contents()
+                updated.verify_encoded(prepared_payload)
                 payload = prepared_payload
-            previous = self.path.read_bytes() if self.path.exists() else None
-            if (sha256(previous) if previous is not None else None) != self._disk_sha:
+            if (sha256_file(self.path) if self.path.exists() else None) != self._disk_sha:
                 raise ConflictError("校验期间作品被外部修改，已停止保存")
-            if previous is not None:
+            if self._disk_sha is not None:
                 backup = (
                     self.history_directory
                     / f"{self.project.commit_seq:08d}-{self._disk_sha}.stitchpress"
                 )
                 if not backup.exists():
-                    atomic_write(backup, previous)
+                    atomic_copy(self.path, backup, self._disk_sha)
             atomic_write(self.path, payload)
             self._disk_sha = sha256(payload)
             self.project = updated

@@ -56,6 +56,7 @@ class Renderer:
         self.code = code
         self.font_data = font_data
         self.fonts = {}
+        self.text_metrics = {}
         self.title = title
         self.text_layers = parse_layers(text_layers or {})
         self.font_assets = font_assets or {}
@@ -89,11 +90,18 @@ class Renderer:
     def text(self, image, xy, text: str, size: int, anchor="lt"):
         factor = self.fabric.dpi / 300
         font = self.font(ceil(size * factor))
-        validate_glyphs(font, text)
         draw = draw_on(image)
-        box = draw.textbbox(xy, text, font=font, anchor=anchor)
+        key = (xy, text, size, anchor)
+        if key not in self.text_metrics:
+            validate_glyphs(font, text)
+            self.text_metrics[key] = draw.textbbox(xy, text, font=font, anchor=anchor)
+        box = self.text_metrics[key]
         if box[0] < 0 or box[1] < 0 or box[2] > image.width or box[3] > image.height:
             raise ResourceError(f"文字超出画布，请调整版式：{text[:60]}")
+        if isinstance(image, BandSurface) and (
+            box[3] <= image.band_top or box[1] >= image.band_top + image.image.height
+        ):
+            return
         draw.text(xy, text, fill=BLACK, font=font, anchor=anchor)
 
     def font(self, pixels):
@@ -158,13 +166,13 @@ class Renderer:
         font = self.font(39)
         return max(345, ceil(max(font.getlength(c.code) for _, c in self.entries)) + 185)
 
-    def reference(self, page: Page, plan: PagePlan, *, style="symbols", minor_grid=True):
+    def reference(self, page: Page, plan: PagePlan, *, style="symbols", minor_grid=True, band=None):
         if self.reading is not None:
-            return self.reading.reference(page, plan, style=style, minor_grid=minor_grid)
+            return self.reading.reference(page, plan, style=style, minor_grid=minor_grid, band=band)
         if style not in {"symbols", "pale", "color"}:
             raise StitchPressError("未知查图样式")
-        image = self.canvas(plan.paper_px)
-        draw = ImageDraw.Draw(image)
+        image = BandSurface(plan.paper_px, *band) if band else self.canvas(plan.paper_px)
+        draw = draw_on(image)
         factor = self.fabric.dpi / 300
 
         def sc(n):
@@ -506,13 +514,51 @@ def screen_rgb(image: Image.Image, icc: bytes | None) -> Image.Image:
 
 
 def stitch_preview(
-    design: Design, cell: int = 18, style: str = "x", highlight: int | None = None
+    design: Design,
+    cell: int = 18,
+    style: str = "x",
+    highlight: int | None = None,
+    *,
+    max_edge: int | None = None,
 ) -> Image.Image:
     if style not in {"x", "dot"} or not 6 <= cell <= 36:
         raise StitchPressError("未知模拟样式或不支持的像素密度")
     width, height = design.width * cell, design.height * cell
     k = max(ceil(width / 3), ceil(height / 4))
     width, height = 3 * k, 4 * k
+    if max_edge is not None and (
+        width * height > MAX_RENDER_PIXELS or max(width, height) > max_edge
+    ):
+        import numpy as np
+
+        if type(max_edge) is not int or not 16 <= max_edge <= 4096:
+            raise ResourceError("展示概览长边须为16–4096像素")
+        # One pixel per original grid cell, then a bounded display-only thumbnail.
+        # No full-resolution X/dot canvas is allocated and the master stays intact.
+        colors = np.asarray([c.rgb for c in design.palette] + [(255, 255, 255)], dtype=np.uint8)
+        if highlight is not None:
+            for i in range(len(design.palette)):
+                if i != highlight:
+                    colors[i] = np.rint(colors[i] * 0.2 + 255 * 0.8)
+        labels = np.asarray(design.labels, dtype=np.int16)
+        rgb = colors[np.where(labels < 0, len(design.palette), labels)]
+        grid = Image.fromarray(rgb)
+        scale = max_edge / max(width, height)
+        target_k = max(1, min(max_edge // 4, round(k * scale)))
+        result = Image.new("RGB", (3 * target_k, 4 * target_k), "white")
+        subject = grid.resize(
+            (
+                max(1, round(design.width * cell * scale)),
+                max(1, round(design.height * cell * scale)),
+            ),
+            Image.Resampling.NEAREST,
+        )
+        result.paste(
+            subject, ((result.width - subject.width) // 2, (result.height - subject.height) // 2)
+        )
+        subject.close()
+        grid.close()
+        return result
     if width * height > MAX_RENDER_PIXELS:
         raise ResourceError("模拟超过8000万像素试验限制")
     im = Image.new("RGB", (width, height), "white")

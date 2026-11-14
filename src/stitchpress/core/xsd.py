@@ -7,9 +7,11 @@ No XSD writer or universal Pattern Maker compatibility is promised.
 
 import json
 import struct
+from array import array
 
 from .errors import StitchPressError
 from .identity import sha256
+from .limits import MAX_CHART_BYTES
 from .models import MAX_CELLS, ThreadColor, new_design
 
 
@@ -53,7 +55,7 @@ def _grid(reader, count):
     )
     rotations = [(word >> bit) % 32 for word in seeds for bit in range(4)]
     counter, step = seeds[:2]
-    word_index, cells = 0, []
+    word_index, cells = 0, array("I")
     while len(cells) < count:
         raw = reader.take(reader.number("I") * 4)
         repeat = None
@@ -71,7 +73,7 @@ def _grid(reader, count):
             size = 1 if repeat is None else repeat
             if len(cells) + size > count:
                 raise StitchPressError("XSD压缩段超出声明针格")
-            cells.extend([value] * size)
+            cells.extend(array("I", [value]) * size)
             repeat = None
         if repeat is not None:
             raise StitchPressError("XSD压缩段不完整")
@@ -79,15 +81,17 @@ def _grid(reader, count):
 
 
 def import_xsd(data: bytes, encoding="gb18030"):
-    if len(data) > 16 * 1024 * 1024 or encoding not in {"gb18030", "cp1251", "cp1252"}:
-        raise StitchPressError("XSD文件过大或文字编码不支持")
+    if len(data) > MAX_CHART_BYTES:
+        raise StitchPressError(f"XSD文件{len(data) / 1024**2:.1f}MiB，超过256MiB导入上限")
+    if encoding not in {"gb18030", "cp1251", "cp1252"}:
+        raise StitchPressError("XSD文字编码不支持")
     r = Reader(data, encoding)
     if r.number() != 0x0510:
         raise StitchPressError("仅支持Pattern Maker v4二进制XSD (0x0510)")
     r.take(739)
     w, h = r.number(), r.number()
     if min(w, h) < 1 or w * h > MAX_CELLS:
-        raise StitchPressError("XSD针格超出试验版范围")
+        raise StitchPressError(f"XSD针格{w:,}×{h:,}（{w * h:,}格），须为正且不超过{MAX_CELLS:,}格")
     small_count, joint_count = r.number("I"), r.number()
     if small_count or joint_count:
         raise StitchPressError(
@@ -160,15 +164,16 @@ def import_xsd(data: bytes, encoding="gb18030"):
             "此 XSD 的附加区格式尚未识别。请用 Pattern Maker v4 重新另存后导入；"
             "原文件未修改，本次没有导入任何内容。"
         )
-    labels = []
+    labels = [[] for _ in range(h)]
     for offset, word in enumerate(words):
         kind, index = word >> 24, (word >> 16) & 255
         if kind == 15:
-            labels.append(-1)
+            labels[offset // w].append(-1)
         elif kind == 0 and index < palette_size:
-            labels.append(index)
+            labels[offset // w].append(index)
         else:
             raise StitchPressError(f"XSD第{offset + 1}格含未知针法或非法色板索引")
+    del words
     report = {
         "parser": "pmaker-v4-full-v2",
         "native_extension": {
@@ -193,7 +198,7 @@ def import_xsd(data: bytes, encoding="gb18030"):
         w,
         h,
         [ThreadColor(**c, catalog_revision="embedded-xsd-" + sha256(data)) for c in palette],
-        [labels[y * w : (y + 1) * w] for y in range(h)],
+        labels,
         provenance=(
             ("source_sha", sha256(data)),
             ("import_report", json.dumps(report, ensure_ascii=False)),

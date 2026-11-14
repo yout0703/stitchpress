@@ -1,0 +1,9 @@
+"""Shared resource budgets; previews and production keep separate pixel policies."""
+
+MAX_CHART_BYTES = 256 * 1024**2
+MAX_SOURCE_BYTES = 128 * 1024**2
+MAX_NORMALIZED_BYTES = 256 * 1024**2
+MAX_SOURCE_PIXELS = 100_000_000
+MAX_GRID_CELLS = 4_000_000
+MAX_PROJECT_BYTES = 1024 * 1024**2
+MAX_MANIFEST_BYTES = 128 * 1024**2

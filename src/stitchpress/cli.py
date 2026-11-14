@@ -14,6 +14,10 @@ def main(argv=None):
     sub.add_parser("gui")
     benchmark = sub.add_parser("import-benchmark", help="本地导入与界面性能诊断，不生成生产文件")
     benchmark.add_argument("pattern", type=Path)
+    large_ui = sub.add_parser("large-ui-check", help="大图后台打开/保存本地诊断")
+    large_ui.add_argument("pattern", type=Path)
+    large_ui.add_argument("project", type=Path)
+    large_ui.add_argument("output", type=Path)
     sub.add_parser("license-status", help="查看试用授权状态")
     request = sub.add_parser("license-request", help="导出离线机器码请求，不开始试用")
     request.add_argument("output", type=Path)
@@ -163,6 +167,10 @@ def execute(args):
         from .app.fixtures import benchmark_import
 
         data = benchmark_import(args.pattern)
+    elif args.command == "large-ui-check":
+        from .app.fixtures import verify_large_ui
+
+        data = verify_large_ui(args.pattern, args.project, args.output)
     elif args.command == "reference-export":
         from dataclasses import replace
 

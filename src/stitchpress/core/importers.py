@@ -1,3 +1,4 @@
+import io
 import json
 import re
 from xml.etree import ElementTree as XML
@@ -6,14 +7,60 @@ from defusedxml import ElementTree as SafeXML
 
 from .errors import StitchPressError
 from .identity import sha256
+from .limits import MAX_CHART_BYTES
 from .models import MAX_CELLS, Design, ThreadColor, new_design
 
 
+def _oxs_headers(data):
+    """Retain metadata only; discard millions of stitch XML objects as they arrive."""
+    stack, root, stitches = [], None, 0
+    for event, node in SafeXML.iterparse(
+        io.BytesIO(data),
+        events=("start", "end"),
+        forbid_dtd=True,
+        forbid_entities=True,
+        forbid_external=True,
+    ):
+        if event == "start":
+            stack.append(node)
+            if len(stack) == 1:
+                root = node
+                if root.tag != "chart":
+                    raise StitchPressError("仅支持OXS 1.0 chart根元素")
+            if len(stack) == 2 and node.tag not in {
+                "format",
+                "commentboxes",
+                "properties",
+                "palette",
+                "fullstitches",
+                "backstitches",
+                "partstitches",
+                "ornaments_inc_knots_and_beads",
+            }:
+                raise StitchPressError(f"未知OXS记录：{node.tag}")
+            if len(stack) == 3 and stack[1].tag in {
+                "backstitches",
+                "partstitches",
+                "ornaments_inc_knots_and_beads",
+            }:
+                raise StitchPressError(f"不支持非全针记录：{stack[1].tag}")
+        else:
+            if len(stack) == 3 and stack[1].tag == "fullstitches":
+                stitches += 1
+                if stitches > MAX_CELLS:
+                    raise StitchPressError(f"OXS针数超过{MAX_CELLS:,}格上限")
+                stack[1].clear()
+            if len(stack) == 3 and stack[1].tag == "palette" and len(stack[1]) > 513:
+                raise StitchPressError("OXS色板超过512色上限")
+            stack.pop()
+    return root
+
+
 def import_oxs(data: bytes) -> Design:
-    if len(data) > 16 * 1024 * 1024:
-        raise StitchPressError("OXS超过16MiB试验限制")
+    if len(data) > MAX_CHART_BYTES:
+        raise StitchPressError(f"OXS文件{len(data) / 1024**2:.1f}MiB，超过256MiB导入上限")
     try:
-        root = SafeXML.fromstring(data, forbid_dtd=True, forbid_entities=True, forbid_external=True)
+        root = _oxs_headers(data)
         if root.tag != "chart":
             raise StitchPressError("仅支持OXS 1.0 chart根元素")
         allowed = {
@@ -43,7 +90,9 @@ def import_oxs(data: bytes) -> Design:
             raise StitchPressError("仅支持明确声明的OXS 1.0")
         w, h = int(props.attrib["chartwidth"]), int(props.attrib["chartheight"])
         if min(w, h) < 1 or w * h > MAX_CELLS:
-            raise StitchPressError("OXS针格尺寸无效或超出试验上限")
+            raise StitchPressError(
+                f"OXS针格{w:,}×{h:,}（{w * h:,}格），须为正且不超过{MAX_CELLS:,}格"
+            )
         palette, index_map = [], {}
         for item in root.find("palette"):
             if item.tag != "palette_item" or len(item):
@@ -74,8 +123,22 @@ def import_oxs(data: bytes) -> Design:
             )
             index_map[idx] = len(palette) - 1
         labels = [[-1] * w for _ in range(h)]
-        seen = set()
-        for stitch in root.find("fullstitches"):
+        seen = bytearray(w * h)
+        stack = []
+        for event, stitch in SafeXML.iterparse(
+            io.BytesIO(data),
+            events=("start", "end"),
+            forbid_dtd=True,
+            forbid_entities=True,
+            forbid_external=True,
+        ):
+            if event == "start":
+                stack.append(stitch)
+                continue
+            parent = stack[-2] if len(stack) > 1 else None
+            stack.pop()
+            if parent is None or parent.tag != "fullstitches":
+                continue
             if (
                 stitch.tag != "stitch"
                 or set(stitch.attrib) != {"x", "y", "palindex"}
@@ -83,12 +146,13 @@ def import_oxs(data: bytes) -> Design:
             ):
                 raise StitchPressError("未知OXS针法字段/记录")
             x, y, idx = (int(stitch.attrib[k]) for k in ("x", "y", "palindex"))
-            if not 0 <= x < w or not 0 <= y < h or (x, y) in seen:
+            if not 0 <= x < w or not 0 <= y < h or seen[y * w + x]:
                 raise StitchPressError("OXS坐标越界/重复，须明确0基坐标")
             if idx not in index_map or index_map[idx] == -1:
                 raise StitchPressError("OXS针格引用未知或布色索引")
             labels[y][x] = index_map[idx]
-            seen.add((x, y))
+            seen[y * w + x] = 1
+            parent.clear()
         return new_design(
             w,
             h,
@@ -140,13 +204,23 @@ def export_oxs(design: Design) -> bytes:
             color=bytes(color.rgb).hex().upper(),
             blendcolor="nil",
         )
-    stitches = XML.SubElement(root, "fullstitches")
+    buffer = io.BytesIO()
+    buffer.write(
+        XML.tostring(root, encoding="utf-8", xml_declaration=True).removesuffix(b"</chart>")
+    )
+    buffer.write(b"<fullstitches>")
     for y, row in enumerate(design.labels):
-        for x, i in enumerate(row):
-            if i >= 0:
-                XML.SubElement(stitches, "stitch", x=str(x), y=str(y), palindex=str(i + 1))
-    XML.SubElement(root, "backstitches")
-    return XML.tostring(root, encoding="utf-8", xml_declaration=True)
+        buffer.write(
+            "".join(
+                f'<stitch x="{x}" y="{y}" palindex="{i + 1}" />'
+                for x, i in enumerate(row)
+                if i >= 0
+            ).encode("utf-8")
+        )
+        if buffer.tell() > MAX_CHART_BYTES:
+            raise StitchPressError("OXS导出超过256MiB上限；未生成不完整文件")
+    buffer.write(b"</fullstitches><backstitches /></chart>")
+    return buffer.getvalue()
 
 
 def import_chart(data: bytes, format: str) -> Design:

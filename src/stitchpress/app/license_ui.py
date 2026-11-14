@@ -312,6 +312,9 @@ class TrialController:
 
         for board in owner.findChildren(PreviewBoard):
             board.shutdown()
+        from .background_load import cancel_load
+
+        cancel_load(owner)
         if owner.process is not None:
             owner.cancel_job()
         owner.checkpoint_draft()

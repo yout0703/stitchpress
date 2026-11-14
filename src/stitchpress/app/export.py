@@ -19,7 +19,7 @@ from stitchpress.core.layout import Fabric, PagePlan, decimal, px
 from stitchpress.core.models import Design, ReviewRecord, ThreadColor, validate_catalog_membership
 from stitchpress.core.render import MAX_RENDER_PIXELS, Renderer, stitch_preview
 from stitchpress.core.resources import SymbolLibrary, bundled_font
-from stitchpress.core.streaming import MAX_STREAM_PIXELS, save_production_stream
+from stitchpress.core.streaming import save_production_stream, validate_stream_size
 from stitchpress.platform.files import atomic_write, exclusive_lock
 
 from .artifact_cache import ArtifactCache
@@ -72,15 +72,15 @@ def export_plan(
             (0, 0),
             (),
         )
-    if len(plan.pages) > 100:
-        raise StitchPressError("试验版暂限100张查图页，请减少当前任务规模")
+    if len(plan.pages) > 1000:
+        raise StitchPressError("分页计划超过1000页当前预算，请调整阅读格宽")
     # Conservative working-space estimate, including decoded rasters, PDF, staging and cache.
     production = renderer.layout.canvas_px[0] * renderer.layout.canvas_px[1]
     page_pixels = plan.paper_px[0] * plan.paper_px[1]
-    if ("production" in targets and production > MAX_STREAM_PIXELS) or (
-        needs_pages and page_pixels > MAX_RENDER_PIXELS
-    ):
-        raise StitchPressError("生产超过2.5亿或单页超过6000万像素当前上限；不能静默缩小")
+    if "production" in targets:
+        validate_stream_size(renderer.layout.canvas_px)
+    if needs_pages and page_pixels > MAX_RENDER_PIXELS:
+        raise StitchPressError("阅读单页超过8000万像素，请选择分页纸张")
     estimated_bytes = max(
         16 * 1024**2,
         6
@@ -91,7 +91,7 @@ def export_plan(
         plan,
         {
             "production_px": renderer.layout.canvas_px,
-            "production_streaming": production > MAX_RENDER_PIXELS,
+            "production_streaming": production > 12_000_000,
             "reference_dpi": reference.dpi or fabric.dpi,
             "paper_px": plan.paper_px,
             "page_count": len(plan.pages),
@@ -411,7 +411,7 @@ def export_package(
 
             def write_showcase():
                 image = stitch_preview(
-                    design, cell=showcase_options.cell, style=showcase_options.style
+                    design, cell=showcase_options.cell, style=showcase_options.style, max_edge=4096
                 )
                 try:
                     image.save(path)
@@ -420,7 +420,9 @@ def export_package(
                     return {
                         "size": image.size,
                         "source": design.content_sha,
-                        "one_x_per_occupied_cell": showcase_options.style == "x",
+                        "one_x_per_occupied_cell": showcase_options.style == "x"
+                        and image.width >= design.width * showcase_options.cell,
+                        "display_only": True,
                         "style": showcase_options.style,
                     }
                 finally:

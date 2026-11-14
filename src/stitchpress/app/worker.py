@@ -2,12 +2,14 @@
 
 import json
 from pathlib import Path
+from time import perf_counter
 
 from stitchpress.core.identity import canonical_bytes
 from stitchpress.platform.files import atomic_write
 
 
 def run(job_path: Path) -> int:
+    started = perf_counter()
     job = json.loads(job_path.read_bytes())
     output = Path(job["output"])
     try:
@@ -16,7 +18,29 @@ def run(job_path: Path) -> int:
         recovery_only = job["operation"] in {"encode-project", "recovery"}
         if not recovery_only:
             require_license()
-        if job["operation"] == "encode-project":
+        if job["operation"] in {"load-project", "import-pattern"}:
+            from stitchpress.core.limits import MAX_CHART_BYTES, MAX_PROJECT_BYTES
+
+            from .background_save import read_snapshot, write_snapshot
+            from .reference_actions import import_pattern
+            from .store import Project
+
+            source = Path(job["file"])
+            limit = MAX_PROJECT_BYTES if job["operation"] == "load-project" else MAX_CHART_BYTES
+            if source.stat().st_size > limit:
+                raise ValueError(f"文件超过{limit // 1024**2}MiB当前容量上限")
+            project = (
+                Project.decode(source.read_bytes())
+                if job["operation"] == "load-project"
+                else import_pattern(read_snapshot(Path(job["snapshot"])), source)
+            )
+            staging = output.parent / "loaded"
+            staging.mkdir()
+            result = dict(
+                snapshot=str(write_snapshot(project, staging)),
+                source_sha=project.source_container_sha,
+            )
+        elif job["operation"] == "encode-project":
             from .store import Project
 
             if "snapshot" in job:
@@ -87,8 +111,10 @@ def run(job_path: Path) -> int:
             from .store import Project
 
             path = Path(job["file"])
-            if path.stat().st_size > 64 * 1024**2:
-                raise ValueError("蓝图文件超过64MiB上限")
+            from stitchpress.core.limits import MAX_SOURCE_BYTES
+
+            if path.stat().st_size > MAX_SOURCE_BYTES:
+                raise ValueError("蓝图文件超过128MiB上限")
             raw = path.read_bytes()
             project = Project.decode(Path(job["project"]).read_bytes())
             source = project.entities.get("source")
@@ -359,10 +385,24 @@ def run(job_path: Path) -> int:
             raise ValueError("未知工作进程操作")
         if not recovery_only:
             require_license()
+        metrics = {}
+        if job.get("measure_resources"):
+            from stitchpress.platform.metrics import peak_rss_bytes
+
+            metrics = dict(
+                metrics=dict(
+                    elapsed_seconds=perf_counter() - started, peak_rss_bytes=peak_rss_bytes()
+                )
+            )
         atomic_write(
             output,
             canonical_bytes(
-                {"status": "completed", "result": result, "base_sha": job.get("base_sha")}
+                {
+                    "status": "completed",
+                    "result": result,
+                    "base_sha": job.get("base_sha"),
+                    **metrics,
+                }
             ),
         )
         print(json.dumps({"stage": "completed"}), flush=True)

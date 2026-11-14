@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-from .conversion import normalize_image
+from .conversion import source_preview
 from .errors import ResourceError, StitchPressError
 from .layout import decimal
 from .render import MAX_RENDER_PIXELS, screen_rgb, stitch_preview
@@ -188,19 +188,26 @@ class CommerceRenderer:
             self.design,
             cell=cell,
             style="dot" if settings.art_source == "dot" else context["showcase_options"].style,
+            max_edge=4096,
+        )
+        nominal_k = max(ceil(self.design.width * cell / 3), ceil(self.design.height * cell / 4))
+        density = min(1, simulated.width / (3 * nominal_k))
+        subject_w, subject_h = (
+            round(self.design.width * cell * density),
+            round(self.design.height * cell * density),
         )
         x, y = (
-            (simulated.width - self.design.width * cell) // 2,
-            (simulated.height - self.design.height * cell) // 2,
+            (simulated.width - subject_w) // 2,
+            (simulated.height - subject_h) // 2,
         )
-        self.subject = simulated.crop(
-            (x, y, x + self.design.width * cell, y + self.design.height * cell)
-        )
+        self.subject = simulated.crop((x, y, x + subject_w, y + subject_h))
         simulated.close()
         if settings.art_source == "original":
             if not context.get("source_data"):
                 raise ResourceError("原图展示缺少已绑定对应图，请选择或切换为点图")
-            source, _ = normalize_image(context["source_data"], context.get("input_icc"))
+            source = source_preview(context["source_data"], context.get("input_icc")).convert(
+                "RGBA"
+            )
             white = Image.new("RGBA", source.size, "white")
             white.alpha_composite(source)
             self.subject.close()
@@ -334,7 +341,7 @@ class CommerceRenderer:
         if spec.background_asset:
             if spec.background_asset not in self.assets:
                 raise ResourceError("场景缺少内嵌背景资源")
-            normalized, _ = normalize_image(self.assets[spec.background_asset])
+            normalized = source_preview(self.assets[spec.background_asset]).convert("RGBA")
             white = Image.new("RGBA", normalized.size, "white")
             white.alpha_composite(normalized)
             self.contained(image, white.convert("RGB"), box)
@@ -465,7 +472,7 @@ class CommerceRenderer:
             source = self.context.get("source_data")
             if not source:
                 raise ResourceError("效果对比缺少对应来源图片，请导入后导出该项；不伪造原图")
-            normalized, _ = normalize_image(source, self.context.get("input_icc"))
+            normalized = source_preview(source, self.context.get("input_icc")).convert("RGBA")
             white = Image.new("RGBA", normalized.size, "white")
             white.alpha_composite(normalized)
             mid = (box[0] + box[2]) // 2

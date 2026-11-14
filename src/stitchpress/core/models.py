@@ -5,8 +5,9 @@ from uuid import uuid4
 
 from .errors import StitchPressError
 from .identity import digest
+from .limits import MAX_GRID_CELLS
 
-MAX_CELLS = 1_000_000  # Provisional local alpha guard, not a released performance promise.
+MAX_CELLS = MAX_GRID_CELLS
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,10 @@ class Design:
         if any(type(v) is not int or v < 1 for v in (self.width, self.height)):
             raise StitchPressError("针格宽高必须为正整数")
         if self.width * self.height > MAX_CELLS:
-            raise StitchPressError(f"试验版暂限{MAX_CELLS}个总格，不能静默缩图")
+            raise StitchPressError(
+                f"针格 {self.width:,}×{self.height:,}（{self.width * self.height:,}格）"
+                f"超过当前{MAX_CELLS:,}格上限；原图纸未缩小或修改"
+            )
         if (
             not isinstance(self.revision_id, str)
             or not self.revision_id

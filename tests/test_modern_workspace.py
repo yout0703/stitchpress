@@ -130,7 +130,7 @@ def test_library_dialog_name_is_staged_and_cancel_keeps_project(qtbot):
     w.close()
 
 
-def test_reference_page_cap_accepts_200_and_rejects_201(monkeypatch):
+def test_reference_page_cap_accepts_1000_and_rejects_1001(monkeypatch):
     from stitchpress.app import reference_package
     from stitchpress.core.errors import StitchPressError
     from stitchpress.core.post import PostSettings
@@ -144,16 +144,16 @@ def test_reference_page_cap_accepts_200_and_rejects_201(monkeypatch):
     monkeypatch.setattr(
         reference_package,
         "reading_layout",
-        lambda *_: (reading, replace(original, pages=original.pages * 200)),
+        lambda *_: (reading, replace(original, pages=original.pages * 1000)),
     )
     options = PostSettings(targets=("pages",))
-    assert reference_package.preflight(project, options, demo=True)["page_count"] == 200
+    assert reference_package.preflight(project, options, demo=True)["page_count"] == 1000
     monkeypatch.setattr(
         reference_package,
         "reading_layout",
-        lambda *_: (reading, replace(original, pages=original.pages * 201)),
+        lambda *_: (reading, replace(original, pages=original.pages * 1001)),
     )
-    with pytest.raises(StitchPressError, match="200页"):
+    with pytest.raises(StitchPressError, match="1000页"):
         reference_package.preflight(project, options, demo=True)
 
 

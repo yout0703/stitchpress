@@ -20,7 +20,11 @@ from stitchpress.core.importers import import_chart
 from stitchpress.core.post import PostSettings, ThreadPlan, save_rgb, write_thread_workbook
 from stitchpress.core.reading import reading_layout
 from stitchpress.core.render import MAX_RENDER_PIXELS, Renderer, stitch_preview
-from stitchpress.core.streaming import MAX_STREAM_PIXELS, save_production_stream
+from stitchpress.core.streaming import (
+    save_production_stream,
+    save_reference_stream,
+    validate_stream_size,
+)
 from stitchpress.platform.files import atomic_write, exclusive_lock
 
 from .commerce import commerce_context
@@ -133,19 +137,22 @@ def preflight(project, options=None, *, demo=False):
         if reading_targets:
             raise
         reading, plan = renderer, None
-    if "pages" in options.targets and len(plan.pages) > 200:
-        raise StitchPressError("本地查图暂限200页，不能静默删页")
-    if reading_targets and plan.paper_px[0] * plan.paper_px[1] > MAX_RENDER_PIXELS:
+    if "pages" in options.targets and len(plan.pages) > 1000:
+        raise StitchPressError(
+            f"分页计划有{len(plan.pages):,}页，超过1000页当前预算；请调整阅读格宽"
+        )
+    if "pages" in options.targets and plan.paper_px[0] * plan.paper_px[1] > MAX_RENDER_PIXELS:
         raise StitchPressError("查图单页超过当前8000万像素上限")
     pixels = renderer.layout.canvas_px[0] * renderer.layout.canvas_px[1]
-    if "production" in options.targets and pixels > MAX_STREAM_PIXELS:
-        raise StitchPressError("生产超过当前2.5亿像素保护上限")
+    if "production" in options.targets:
+        validate_stream_size(renderer.layout.canvas_px, bigtiff=options.tiff_container == "bigtiff")
     if "whole" in options.targets:
         _, whole = reading_layout(
             renderer, replace(context["reference"], paper="whole", overlap=0, landscape=False)
         )
-        if len(whole.pages) != 1 or whole.paper_px[0] * whole.paper_px[1] > MAX_RENDER_PIXELS:
-            raise StitchPressError("整张查图超过当前单页保护限值，请使用分页目标")
+        if len(whole.pages) != 1:
+            raise StitchPressError("整张查图未完整容纳，请使用分页目标")
+        validate_stream_size(whole.paper_px, bigtiff=options.tiff_container == "bigtiff")
     from stitchpress.core.layout import physical_layout
 
     physical = physical_layout(design.width, design.height, context["fabric"])
@@ -292,14 +299,18 @@ def export_reference(
             full, whole_plan = reading_layout(renderer, whole)
             if len(whole_plan.pages) != 1:
                 raise StitchPressError("整张查图布局没有完整容纳，不能偷偷分页")
-            image, raster = full.reference(
-                whole_plan.pages[0], whole_plan, style=whole.style, minor_grid=whole.minor_grid
-            )
             path = staging / f"{name}=图纸文件.tif"
-            try:
-                checks = full.save_tiff(image, path, raster)
-            finally:
-                image.close()
+            checks = save_reference_stream(
+                full,
+                path,
+                whole_plan.pages[0],
+                whole_plan,
+                style=whole.style,
+                minor_grid=whole.minor_grid,
+                cancel=cancel,
+                progress=progress,
+                bigtiff=options.tiff_container == "bigtiff",
+            )
             record(path, checks)
         for kind in ("symbols", "card"):
             if kind not in options.targets:
@@ -352,8 +363,14 @@ def export_reference(
         if "effect" in options.targets:
             stage("rendering-dot-effect")
             path = staging / f"{name}=点图效果.bmp"
-            image = stitch_preview(context["design"], cell=options.effect_cell, style="dot")
-            record(path, image_file(image, path, context["fabric"].dpi))
+            image = stitch_preview(
+                context["design"], cell=options.effect_cell, style="dot", max_edge=4096
+            )
+            checks = image_file(image, path, context["fabric"].dpi)
+            checks["display_only"] = True
+            checks["master_grid"] = [context["design"].width, context["design"].height]
+            checks["maximum_display_edge"] = 4096
+            record(path, checks)
         if "pages" in options.targets:
             folder = staging / "分页图纸"
             folder.mkdir()

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from .conversion import normalize_image
+from .conversion import source_preview
 from .errors import ResourceError
 from .text import checked_font, expand
 
@@ -144,7 +144,7 @@ def render_template(renderer, target):
         source = renderer.context.get("source_data")
         if not source:
             raise ResourceError("效果对比缺少对应原图，请先导入或取消该导出项")
-        normalized, _ = normalize_image(source, renderer.context.get("input_icc"))
+        normalized = source_preview(source, renderer.context.get("input_icc")).convert("RGBA")
         white = Image.new("RGBA", normalized.size, "white")
         white.alpha_composite(normalized)
         gap = round(28 * f)

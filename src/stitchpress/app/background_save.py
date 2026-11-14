@@ -53,6 +53,14 @@ def read_snapshot(path):
     return Project(**document, assets=assets)
 
 
+def needs_background_save(project):
+    design = project.entities.get("design", {})
+    return (
+        sum(map(len, project.assets.values())) >= 8 * 1024**2
+        or design.get("width", 0) * design.get("height", 0) > 250_000
+    )
+
+
 def request_save(owner, *, copy_target=None):
     if owner._save_process is not None:
         owner.statusBar().showMessage("正在保存上一份快照；当前新修改会保留，完成后可再次保存")
@@ -60,7 +68,7 @@ def request_save(owner, *, copy_target=None):
     if copy_target is None and (
         owner.coordinator is None
         or owner.coordinator.project.source_schema < PROJECT_SCHEMA
-        or sum(map(len, owner.draft.assets.values())) < 8 * 1024**2
+        or not needs_background_save(owner.draft)
     ):
         return owner.save()
     if not owner.check_save_forms():

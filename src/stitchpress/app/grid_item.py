@@ -51,7 +51,10 @@ class StitchGridItem(QGraphicsItem):
         labels = np.asarray(design.labels, dtype=np.int16)
         colors = np.asarray([*palette, (255, 255, 255)], dtype=np.uint8)
         rgb = colors[np.where(labels < 0, len(palette), labels)]
-        self.overview = QImage(ImageQt(Image.fromarray(rgb))).copy()
+        overview = Image.fromarray(rgb)
+        overview.thumbnail((2048, 2048), Image.Resampling.NEAREST)
+        self.overview = QImage(ImageQt(overview)).copy()
+        overview.close()
         self.last_visible_cells = 0
         self.update()
 

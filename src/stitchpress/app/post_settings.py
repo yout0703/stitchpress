@@ -5,10 +5,10 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
-from zipfile import ZIP_STORED
 
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.identity import canonical_bytes, digest, safe_filename, sha256
+from stitchpress.core.limits import MAX_MANIFEST_BYTES
 from stitchpress.platform.files import atomic_write, exclusive_lock
 
 from .store import MAX_PROJECT_BYTES, Project, _safe_member
@@ -55,12 +55,14 @@ def settings_document(project, resource_folder, *, validate=True):
 
     walk(entities)
     assets = {name: project.assets[name] for name in used}
-    # Reuse full container validation before writing portable settings.
+    # Validate the same contents without allocating a throwaway uncompressed ZIP.
     if validate:
         check = Project.create()
         check.entities = entities
         check.assets = assets
-        check.encode(compression=ZIP_STORED)
+        check.validate_contents()
+        if len(canonical_bytes(check.manifest())) > MAX_MANIFEST_BYTES:
+            raise StitchPressError("作品清单超过128MiB上限")
     record = dict(
         format=FORMAT,
         schema_version=1,
@@ -157,7 +159,9 @@ def load_settings(path, *, replacements=None):
     project = Project.create()
     project.entities = record["entities"]
     project.assets = assets
-    project.encode(compression=ZIP_STORED)
+    project.validate_contents()
+    if len(canonical_bytes(project.manifest())) > MAX_MANIFEST_BYTES:
+        raise StitchPressError("作品清单超过128MiB上限")
     return project
 
 

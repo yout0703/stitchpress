@@ -960,6 +960,12 @@ class ReferenceFeatures:
         if not path:
             return
         try:
+            from .background_load import needs_background, start_load
+
+            if needs_background(path, "import-pattern"):
+                if self.confirm_discard():
+                    start_load(self, path, "import-pattern")
+                return
             updated = import_pattern(self.draft, path)
             if not self.confirm_discard():
                 return

@@ -34,11 +34,12 @@ from PySide6.QtWidgets import (
 )
 
 from stitchpress.core.configuration import ReferenceSettings, ShowcaseSettings
-from stitchpress.core.conversion import normalize_image
+from stitchpress.core.conversion import source_preview
 from stitchpress.core.errors import ConflictError, StitchPressError
 from stitchpress.core.identity import canonical_bytes, sha256
 from stitchpress.core.importers import import_oxs
 from stitchpress.core.layout import Fabric, physical_layout
+from stitchpress.core.limits import MAX_SOURCE_BYTES, MAX_SOURCE_PIXELS
 from stitchpress.core.masks import annotation_masks
 from stitchpress.core.models import Design, PatchCell, ReviewRecord, apply_patch
 from stitchpress.core.resources import assign_symbols, library_from_assets, natural_color_key
@@ -943,6 +944,9 @@ class Workbench(
             self.error(exc)
 
     def confirm_discard(self):
+        if getattr(self, "_load_process", None) is not None:
+            self.error("文件仍在后台打开，请先完成或取消")
+            return False
         if self._save_process is not None:
             self.error("作品仍在后台保存，请等待完成后再关闭或切换作品。")
             return False
@@ -1025,6 +1029,11 @@ class Workbench(
                 # without trying to acquire a second lock on the already open file.
                 self.set_project(self.coordinator.project, self.project_path, self.coordinator)
                 return
+            from .background_load import needs_background, start_load
+
+            if needs_background(path, "load-project"):
+                start_load(self, path, "load-project")
+                return
             coordinator = Coordinator(Path(path))
             self.set_project(coordinator.project, Path(path), coordinator)
         except ConflictError:
@@ -1106,9 +1115,9 @@ class Workbench(
                 target = target.with_name(target.name + ".stitchpress")
             if target.exists():
                 raise StitchPressError("另存不能覆盖已有作品，请选择新文件名")
-            if sum(map(len, self.draft.assets.values())) >= 8 * 1024**2:
-                from .background_save import request_save
+            from .background_save import needs_background_save, request_save
 
+            if needs_background_save(self.draft):
                 return request_save(self, copy_target=target)
             draft = copy.deepcopy(self.draft)
             draft.project_id = uuid4().hex
@@ -1131,6 +1140,14 @@ class Workbench(
         if not path:
             return
         try:
+            from .background_load import needs_background, start_load
+
+            if Path(path).suffix.lower() in {".xsd", ".oxs"} and needs_background(
+                path, "import-pattern"
+            ):
+                if self.confirm_discard():
+                    start_load(self, path, "import-pattern")
+                return
             data = Path(path).read_bytes()
             suffix = Path(path).suffix.lower()
             design = (
@@ -1212,12 +1229,12 @@ class Workbench(
 
         from PIL import Image
 
-        if len(data) > 64 * 1024**2:
-            raise StitchPressError("单张原图超过64MiB项目资源上限")
+        if len(data) > MAX_SOURCE_BYTES:
+            raise StitchPressError("单张原图超过128MiB项目资源上限")
         with Image.open(io.BytesIO(data)) as image:
-            if image.width * image.height > 40_000_000 or getattr(image, "n_frames", 1) != 1:
-                raise StitchPressError("原图须为单帧且不超过4000万像素")
-            image.load()
+            if image.width * image.height > MAX_SOURCE_PIXELS or getattr(image, "n_frames", 1) != 1:
+                raise StitchPressError("原图须为单帧且不超过1亿像素")
+            image.verify()
         if self.source_image is None or sha256(data) != sha256(self.source_image):
             self.invalidate_review("对照源图改变")
             for key in ("source", "input_profile"):
@@ -1249,18 +1266,14 @@ class Workbench(
         self.refresh_reference_pages()
 
     def display_source(self, data):
-        from PIL import Image
-
         input_profile = self.draft.entities.get("input_profile")
-        normalized, _ = normalize_image(
+        display = source_preview(
             data, self.draft.assets[input_profile["asset"]] if input_profile else None
         )
-        display = Image.new("RGBA", normalized.size, "white")
-        display.alpha_composite(normalized)
-        display.thumbnail((4096, 4096))
         self.source_empty.hide()
         self.source_canvas.show()
-        self.source_canvas.set_image(display.convert("RGB"), fit=True)
+        self.source_canvas.set_image(display, fit=True)
+        display.close()
 
     def ai_settings(self):
         AISettings(self).exec()
@@ -1740,6 +1753,10 @@ class Workbench(
             self.log.append("已停止当前本地任务；已有作品保持可用")
 
     def closeEvent(self, event):
+        if getattr(self, "_load_process", None) is not None:
+            self.error("文件仍在后台打开，请先完成或取消")
+            event.ignore()
+            return
         trial_locked = self.trial_controller is not None and self.trial_controller.locked
         if trial_locked:
             if self.trial_controller.recovery_path is None:

@@ -1,9 +1,35 @@
 import os
 import tempfile
 from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 
 from stitchpress.core.errors import ConflictError
+
+
+def atomic_copy(source: Path, target: Path, expected_sha: str):
+    """Preserve history without loading a large previous container into RAM."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    try:
+        checksum = sha256()
+        with os.fdopen(fd, "wb") as output, source.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024**2), b""):
+                checksum.update(chunk)
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        if checksum.hexdigest() != expected_sha:
+            raise ConflictError("历史备份期间原作品被修改，已停止保存")
+        os.replace(temporary, target)
+        if os.name != "nt":
+            directory = os.open(target.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def atomic_write(path: Path, data: bytes) -> None:

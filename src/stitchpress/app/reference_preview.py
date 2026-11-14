@@ -7,7 +7,7 @@ from stitchpress.core.cards import symbol_pages
 from stitchpress.core.commerce import TARGETS, CommerceRenderer, CommerceSettings
 from stitchpress.core.errors import StitchPressError
 from stitchpress.core.reading import reading_layout
-from stitchpress.core.render import MAX_RENDER_PIXELS, screen_rgb, stitch_preview
+from stitchpress.core.render import screen_rgb, stitch_preview
 
 from .reference_package import render_context
 
@@ -33,10 +33,11 @@ def preview_reference(project, target, output, number=1):
             context["design"],
             cell=project.entities.get("post", {}).get("effect_cell", 18),
             style="dot",
+            max_edge=1600,
         )
     elif target == "production":
         w, h = renderer.layout.canvas_px
-        if w * h > MAX_RENDER_PIXELS:
+        if w * h > 12_000_000:
             from stitchpress.core.streaming import production_overview
 
             image, extra = production_overview(renderer)
@@ -51,15 +52,27 @@ def preview_reference(project, target, output, number=1):
             )
         if type(number) is not int or not 1 <= number <= len(plan.pages):
             raise StitchPressError("查图页码越界")
-        image, raster = reading.reference(
-            plan.pages[number - 1],
-            plan,
-            style=context["reference"].style,
-            minor_grid=context["reference"].minor_grid,
-        )
-        checks.update(
-            reading.verify_cells(image, raster), pages=len(plan.pages), dpi=reading.fabric.dpi
-        )
+        if plan.paper_px[0] * plan.paper_px[1] > 12_000_000:
+            from stitchpress.core.streaming import reference_overview
+
+            image, extra = reference_overview(
+                reading,
+                plan.pages[number - 1],
+                plan,
+                style=context["reference"].style,
+                minor_grid=context["reference"].minor_grid,
+            )
+            checks.update(extra, pages=len(plan.pages), dpi=reading.fabric.dpi)
+        else:
+            image, raster = reading.reference(
+                plan.pages[number - 1],
+                plan,
+                style=context["reference"].style,
+                minor_grid=context["reference"].minor_grid,
+            )
+            checks.update(
+                reading.verify_cells(image, raster), pages=len(plan.pages), dpi=reading.fabric.dpi
+            )
     elif target in {"symbols", "card"}:
         image = None
         for index, candidate in enumerate(symbol_pages(reading, target), 1):

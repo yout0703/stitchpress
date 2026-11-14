@@ -131,6 +131,94 @@ def benchmark_import(path: Path):
         window.close()
 
 
+def verify_large_ui(pattern, project_path, output):
+    """Drive the real worker dispatcher and Qt event loop; only write an independent QA copy."""
+    import time
+
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    from stitchpress.core.identity import sha256_file
+    from stitchpress.platform.metrics import peak_rss_bytes
+
+    from .background_load import cancel_load, start_load
+    from .background_save import request_save
+    from .desktop import Workbench
+
+    application = QApplication.instance() or QApplication([])
+    window = Workbench()
+    window.recovery_timer.stop()
+    errors, ticks, phases = [], [], {}
+    window.error = lambda error: errors.append(str(error))
+    timer = QTimer(window)
+    timer.timeout.connect(lambda: ticks.append(time.monotonic()))
+    timer.start(10)
+    source_sha = sha256_file(project_path)
+    window.show()
+
+    def wait_for(attribute, started, before):
+        while getattr(window, attribute, None) is not None:
+            application.processEvents()
+            if time.monotonic() - started > 240:
+                cancel_load(window)
+                raise RuntimeError("大图界面诊断超时")
+            time.sleep(0.005)
+        application.processEvents()
+        if errors:
+            raise RuntimeError(errors[-1])
+        observed = [started, *ticks[before:], time.monotonic()]
+        return dict(
+            seconds=observed[-1] - started,
+            event_ticks=len(ticks) - before,
+            maximum_event_gap_seconds=max(
+                b - a for a, b in zip(observed, observed[1:], strict=False)
+            ),
+        )
+
+    try:
+        started, before = time.monotonic(), len(ticks)
+        start_load(window, project_path, "load-project")
+        phases["open"] = wait_for("_load_process", started, before)
+        item = window.canvas._grid_item
+        assert max(item.overview.width(), item.overview.height()) <= 2048
+        window.show_page(0)
+        application.processEvents()
+        window.canvas.actual_pixels()
+        window.canvas.centerOn(item.dx + item.design.width * 9, item.dy + item.design.height * 9)
+        window.canvas.viewport().repaint()
+        application.processEvents()
+        assert 0 < item.last_visible_cells < 20000
+        visible = item.last_visible_cells
+        saved_copy = Path(output)
+        started, before = time.monotonic(), len(ticks)
+        assert request_save(window, copy_target=saved_copy)
+        phases["save_copy"] = wait_for("_save_process", started, before)
+        started, before = time.monotonic(), len(ticks)
+        start_load(window, pattern, "import-pattern")
+        phases["import"] = wait_for("_load_process", started, before)
+        design = window.design
+        start_load(window, pattern, "import-pattern")
+        cancel_load(window)
+        wait_for("_load_process", time.monotonic(), len(ticks))
+        assert window.design.content_sha == design.content_sha
+        assert sha256_file(project_path) == source_sha
+        assert all(p["event_ticks"] > 2 for p in phases.values())
+        return dict(
+            grid=[design.width, design.height],
+            counts=design.counts,
+            phases=phases,
+            viewport_cells=visible,
+            source_unchanged=True,
+            cancel_preserved_draft=True,
+            saved_copy=str(saved_copy),
+            peak_rss_bytes=peak_rss_bytes(),
+        )
+    finally:
+        timer.stop()
+        window.dirty = False
+        window.close()
+
+
 def create_fixture_manifest(path: Path):
     descriptions = [
         "最小矩阵",

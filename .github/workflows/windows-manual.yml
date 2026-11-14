@@ -30,7 +30,7 @@ concurrency:
 jobs:
   windows-x64:
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
       # Windows runners may default redirected Python output to CP1252.
@@ -72,6 +72,9 @@ jobs:
           uv run --all-groups python tools/validate_bundle_commerce.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/commerce
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Compress-Archive -Path dist/windows/StitchPress -DestinationPath dist/windows/StitchPress-windows-x64-local.zip
+      - name: Verify native large-document import preview save and export
+        timeout-minutes: 18
+        run: uv run --all-groups python tools/validate_bundle_large.py "dist/windows/绣印工坊测试/StitchPress.exe" --output reports/local/windows/large-documents
       - name: Build protected seven-day offline trial candidate
         run: uv run --all-groups python tools/build_desktop.py --edition trial --protect --public-keys release/trial-public-keys.json
       - name: Verify protected trial denies unactivated business operations

@@ -127,9 +127,18 @@ def save_rgb(image, path, *, dpi=300, quality=95, source_icc=None):
             raise StitchPressError("图像缺少正确sRGB配置")
         import numpy as np
 
-        diff = np.abs(np.asarray(actual).astype("int16") - np.asarray(rgb).astype("int16"))
         lossy = suffix in {".jpg", ".jpeg"}
-        if not lossy and np.any(diff):
+        error_sum, max_error, maximum_band = 0, 0, 0
+        for top in range(0, actual.height, 128):
+            box = (0, top, actual.width, min(actual.height, top + 128))
+            got, expected = actual.crop(box), rgb.crop(box)
+            diff = np.abs(np.asarray(got).astype("int16") - np.asarray(expected).astype("int16"))
+            got.close()
+            expected.close()
+            error_sum += int(diff.sum())
+            max_error = max(max_error, int(diff.max()))
+            maximum_band = max(maximum_band, diff.nbytes)
+        if not lossy and max_error:
             raise StitchPressError("无损图像像素反读不符")
         report = dict(
             format=actual.format,
@@ -137,8 +146,9 @@ def save_rgb(image, path, *, dpi=300, quality=95, source_icc=None):
             dpi=dpi,
             lossy=lossy,
             jpeg_quality=quality if lossy else None,
-            mean_absolute_error=float(diff.mean()),
-            max_absolute_error=int(diff.max()),
+            mean_absolute_error=error_sum / (actual.width * actual.height * 3),
+            max_absolute_error=max_error,
+            maximum_diff_band_bytes=maximum_band,
             visual_review="pending",
             source_pixels_checked=True,
         )
