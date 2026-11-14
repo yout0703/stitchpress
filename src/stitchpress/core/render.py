@@ -14,7 +14,7 @@ from .layout import Fabric, Page, PagePlan, page_coordinates, physical_layout, p
 from .models import Design
 from .resources import SymbolLibrary, load_font, natural_color_key
 from .surface import BandSurface, draw_on
-from .text import draw_layer, parse_layers, values_for
+from .text import draw_layer, parse_layers, validate_glyphs, values_for
 
 WHITE = (0, 0, 0, 0)
 BLACK = (255, 255, 255, 255)
@@ -89,12 +89,7 @@ class Renderer:
     def text(self, image, xy, text: str, size: int, anchor="lt"):
         factor = self.fabric.dpi / 300
         font = self.font(ceil(size * factor))
-        if any(ord(c) > 127 for c in text):
-            missing = bytes(font.getmask("\U0010ffff"))
-            if any(not c.isspace() and bytes(font.getmask(c)) == missing for c in text):
-                raise ResourceError(
-                    "所选输出字体缺少文字所需字形，请导入匹配字体；不能静默印出方框"
-                )
+        validate_glyphs(font, text)
         draw = draw_on(image)
         box = draw.textbbox(xy, text, font=font, anchor=anchor)
         if box[0] < 0 or box[1] < 0 or box[2] > image.width or box[3] > image.height:

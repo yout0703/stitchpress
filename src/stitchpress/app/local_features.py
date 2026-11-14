@@ -63,6 +63,7 @@ class SpecificationDialog(QDialog):
         self.resize(640, 690)
         self.font_data = None
         self.font_name = None
+        self.font_reset = False
         self.preset_store = PresetStore(settings_dir() / "presets")
         layout = QVBoxLayout(self)
         tabs = self.tabs = QTabWidget()
@@ -247,11 +248,23 @@ class SpecificationDialog(QDialog):
         section("输出字体")
         font_button = QPushButton("导入字体…")
         font_button.clicked.connect(self.choose_font)
-        self.font_label = QLabel("默认 Noto Sans · 中文标题需要导入含中文字形的字体")
+        saved_font = owner.draft.entities.get("output_font") or {}
+        self.font_label = QLabel(
+            f"作品自定义字体：{saved_font.get('name', '已导入字体')}"
+            if saved_font
+            else "内置 Noto Sans CJK SC · 支持常用中文和英文，无需安装系统字体"
+        )
         self.font_label.setWordWrap(True)
-        form.addRow(font_button)
+        font_actions = QHBoxLayout()
+        font_actions.setSpacing(12)
+        font_actions.addWidget(font_button)
+        self.reset_font_button = QPushButton("恢复内置字体")
+        self.reset_font_button.clicked.connect(self.reset_output_font)
+        font_actions.addWidget(self.reset_font_button)
+        font_actions.addStretch()
+        form.addRow(font_actions)
         form.addRow(self.font_label)
-        note = QLabel("以上设置只影响阅读图纸，生产图仍使用实际格距和生产 DPI。")
+        note = QLabel("页面与格宽设置只影响阅读图纸；公共输出字体也用于生产图和符号表。")
         note.setWordWrap(True)
         note.setProperty("role", "muted")
         form.addRow(note)
@@ -488,9 +501,15 @@ class SpecificationDialog(QDialog):
                 data = Path(path).read_bytes()
                 load_font(39, data)
                 self.font_data, self.font_name = data, Path(path).name
+                self.font_reset = False
                 self.font_label.setText(f"将随作品保存：{self.font_name}")
             except Exception as exc:
                 QMessageBox.warning(self, "字体未导入", str(exc))
+
+    def reset_output_font(self):
+        self.font_data = self.font_name = None
+        self.font_reset = bool(self.owner.draft.entities.get("output_font"))
+        self.font_label.setText("内置 Noto Sans CJK SC · 支持常用中文和英文，无需安装系统字体")
 
     def reload_presets(self):
         presets, errors = self.preset_store.list()
@@ -995,6 +1014,8 @@ class LocalFeatures:
             self.draft.entities["fabric"] = asdict(fabric)
             self.draft.entities["reference"] = reference.to_dict()
             self.draft.entities["showcase"] = dialog.showcase_values().to_dict()
+            if dialog.font_reset:
+                self.draft.entities.pop("output_font", None)
             if dialog.font_data:
                 asset = f"resources/fonts/{sha256(dialog.font_data)}.font"
                 self.draft.assets[asset] = dialog.font_data

@@ -110,11 +110,23 @@ def values_for(design, fabric, *, code="", title="", page="", pages="", scale="1
     }
 
 
+def validate_glyphs(font, text):
+    missing = bytes(font.getmask("\U0010ffff"))
+    absent = list(
+        dict.fromkeys(c for c in text if not c.isspace() and bytes(font.getmask(c)) == missing)
+    )
+    if absent:
+        details = "、".join(f"“{c}”(U+{ord(c):04X})" for c in absent[:8])
+        raise ResourceError(
+            f"输出字体缺少字形：{details}。请在「印花与图纸 → 阅读图纸 → 输出字体」"
+            "恢复内置中英文字体，或导入包含这些字形的字体；"
+            "若顶栏或页脚单独指定了字体，请在「标题与页脚」改为沿用公共字体。"
+        )
+
+
 def checked_font(size, data, text):
     font = load_font(size, data)
-    missing = bytes(font.getmask("\U0010ffff"))
-    if any(not c.isspace() and bytes(font.getmask(c)) == missing for c in text):
-        raise ResourceError("输出字体缺少所需字形，请导入匹配字体；不会静默输出方框")
+    validate_glyphs(font, text)
     return font
 
 

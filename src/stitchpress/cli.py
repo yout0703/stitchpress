@@ -129,10 +129,12 @@ def execute(args):
 
         from . import _edition
         from .core.identity import sha256
-        from .core.resources import builtin_library
+        from .core.resources import builtin_library, bundled_font
+        from .core.text import checked_font
         from .platform.launch import is_compiled, worker_program
 
         library = builtin_library()
+        checked_font(24, None, "中文图纸 ABC 001 · ×")
         data = {
             "app": __version__,
             "python": platform.python_version(),
@@ -145,6 +147,7 @@ def execute(args):
             "runtime_executable": sys.executable,
             "worker_program": worker_program(),
             "edition": _edition.EDITION,
+            "builtin_output_font": dict(name=bundled_font().name, chinese_glyphs_verified=True),
             "qt_chinese_translation_available": (
                 Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath))
                 / "qtbase_zh_CN.qm"

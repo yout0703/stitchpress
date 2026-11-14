@@ -43,7 +43,8 @@ def main():
     project = import_pattern(
         initial, Path(__file__).parents[1] / "fixtures" / "s01-independent.xsd"
     )
-    project.entities["metadata"] = dict(title="R1 independent fixture", code="AK0026")
+    # A clean Windows machine must render Chinese without any installed CJK font.
+    project.entities["metadata"] = dict(title="中文花园 · Independent fixture", code="客户0026")
     design = Design.from_dict(project.entities["design"])
     source = Image.new("RGB", (80, 60), "white")
     from PIL import ImageDraw

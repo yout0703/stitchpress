@@ -17,6 +17,34 @@ from stitchpress.core.resources import assign_symbols, library_from_assets
 from stitchpress.core.streaming import save_production_stream
 
 
+def test_restore_bundled_output_font_is_pending_until_applied_and_preserves_history(qtbot):
+    from stitchpress.core.identity import sha256
+    from stitchpress.core.resources import bundled_font
+
+    w = Workbench()
+    qtbot.addWidget(w)
+    data = (bundled_font().parent / "NotoSans-Regular.ttf").read_bytes()
+    asset = "resources/fonts/latin.font"
+    original = dict(asset=asset, name="Latin.ttf", sha256=sha256(data))
+    w.draft.assets[asset] = data
+    w.draft.entities["output_font"] = original.copy()
+    w.spec_panel.reload()
+    d = w.spec_panel.editor
+    assert "Latin.ttf" in d.font_label.text()
+    d.reset_font_button.click()
+    assert w.spec_panel.pending() and w.draft.entities["output_font"] == original
+    w.spec_panel.reload()  # Cancel must keep the selected custom font.
+    assert w.draft.entities["output_font"] == original
+    w.spec_panel.editor.reset_font_button.click()
+    w.spec_panel.apply()
+    assert "output_font" not in w.draft.entities and not w.spec_panel.pending()
+    assert w.draft.assets[asset] == data
+    history = [v for k, v in w.draft.entities.items() if k.startswith("reference-settings:")]
+    assert history[-1]["output_font"] == original
+    w.dirty = False
+    w.close()
+
+
 @pytest.mark.parametrize("action", ["save", "save_as", "request_save"])
 def test_save_locates_unapplied_page_without_touching_file(qtbot, tmp_path, monkeypatch, action):
     from stitchpress.app.store import Coordinator

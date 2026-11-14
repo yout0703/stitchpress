@@ -54,6 +54,8 @@ def main():
     if not doctor["compiled"] or Path(doctor["worker_program"]).resolve() != binary:
         raise RuntimeError("Compiled worker launcher does not resolve to the native binary")
     library = doctor["builtin_symbol_library"]
+    if not doctor["builtin_output_font"]["chinese_glyphs_verified"]:
+        raise RuntimeError("Bundled output font cannot render Chinese")
     if not doctor["qt_chinese_translation_available"]:
         raise RuntimeError("Chinese standard-dialog translations are missing from the bundle")
     if library["symbols"] != 152 or not library["icc_sha"] or "彩色" not in library["name"]:

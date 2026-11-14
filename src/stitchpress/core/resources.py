@@ -16,7 +16,8 @@ _BUNDLED_LIBRARY_STATE = None
 
 
 def bundled_font() -> Path:
-    return Path(__file__).parents[1] / "resources" / "fonts" / "NotoSans-Regular.ttf"
+    # Output must not depend on which fonts happen to be installed on the device.
+    return Path(__file__).parents[1] / "resources" / "fonts" / "NotoSansCJKsc-Regular.otf"
 
 
 def load_font(size: int, path: Path | bytes | None = None):

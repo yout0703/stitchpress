@@ -155,7 +155,13 @@ class EditorPanel(QWidget):
         d = self.editor
         if self.kind == "spec":
             fabric, reference = d.values()
-            return [asdict(fabric), reference.to_dict(), d.showcase_values().to_dict(), d.font_data]
+            return [
+                asdict(fabric),
+                reference.to_dict(),
+                d.showcase_values().to_dict(),
+                d.font_data,
+                d.font_reset,
+            ]
         return [d.values(), getattr(d, "assets", {})]
 
     def pending(self):
@@ -277,6 +283,8 @@ class EditorPanel(QWidget):
                     self.owner.draft.entities["reference"],
                     self.owner.draft.entities["showcase"],
                 ) = value[:3]
+                if d.font_reset:
+                    self.owner.draft.entities.pop("output_font", None)
                 if d.font_data:
                     from stitchpress.core.identity import sha256
 

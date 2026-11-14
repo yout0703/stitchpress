@@ -33,3 +33,6 @@ def test_windowed_cli_file_report_does_not_require_stdout(tmp_path, monkeypatch)
     assert response["exit_code"] == 0 and not response["stderr"]
     doctor = json.loads(response["stdout"])
     assert doctor["app"] and doctor["libtiff"]
+    assert doctor["builtin_output_font"] == dict(
+        name="NotoSansCJKsc-Regular.otf", chinese_glyphs_verified=True
+    )

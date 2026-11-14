@@ -37,6 +37,9 @@ def main():
     doctor = run("doctor", ["doctor"], 0)
     assert doctor["edition"] == "trial" and doctor["compiled"] is True
     assert doctor["qt_chinese_translation_available"]
+    assert doctor["builtin_output_font"] == dict(
+        name="NotoSansCJKsc-Regular.otf", chinese_glyphs_verified=True
+    )
     library = doctor["builtin_symbol_library"]
     assert library["symbols"] == 152 and library["icc_sha"] and "彩色" in library["name"]
     status = run("status", ["license-status"], 0)
